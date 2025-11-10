@@ -1115,10 +1115,11 @@ async def search_123_files(client: P123Client, keyword: str) -> list:
     """搜索123网盘中的文件夹（返回最多15个结果）"""
     all_items = []
     last_file_id = 0
+    parent_file_id = get_int_env("ENV_123_LINK_MOVICE_PID", 0)
     try:
         for i in range(5):  # 最多3页
             response = requests.get(
-                f"https://open-api.123pan.com/api/v2/file/list?parentFileId=0&searchData={encodeURIComponent(keyword)}&searchMode=1&limit=100&lastFileId={last_file_id}",
+                f"https://open-api.123pan.com/api/v2/file/list?parentFileId={parent_file_id}&searchData={encodeURIComponent(keyword)}&searchMode=1&limit=100&lastFileId={last_file_id}",
                 headers={
                     'Authorization': f'Bearer {client.token}',
                     'Platform': 'open_platform'
@@ -2627,22 +2628,24 @@ def handle_general_message(message):
             reply_thread_pool.submit(send_reply_delete, message, f"发现{len(target_urls)}个天翼云盘分享链接，开始转存...")
             success_count = 0
             fail_count = 0
+            link_save_method = get_int_env("ENV_189_LINK_UPLOAD_METHOD", 2)
             for url in target_urls:
-                try:                    
-                    # result = save_189_link(client189, url, os.getenv("ENV_189_LINK_UPLOAD_PID","-11"))
-                    # if result:
-                    #     success_count += 1
-                    #     logger.info(f"转存成功: {url}")
-                    # else:
-                    #     fail_count += 1
-                    #     logger.error(f"转存失败: {url}")
-                    json_data = create_189_rapid_transfer(url, "")
-                    if json_data:
-                        save_json_file_189(message, json_data)
-                        # parse_share_link(message, kuake_link, get_int_env("ENV_123_KUAKE_UPLOAD_PID", 0))
-                    else:
-                        logger.error(f"189分享转存123出错")
-                        reply_thread_pool.submit(send_reply, message, f"189分享转存123出错")
+                try:
+                    if link_save_method == 3 or link_save_method == 1:
+                        result = save_189_link(client189, url, os.getenv("ENV_189_LINK_UPLOAD_PID","-11"))
+                        if result:
+                            success_count += 1
+                            logger.info(f"转存成功: {url}")
+                        else:
+                            fail_count += 1
+                            logger.error(f"转存失败: {url}")
+                    if link_save_method == 2 or link_save_method == 1:
+                        json_data = create_189_rapid_transfer(url, "")
+                        if json_data:
+                            save_json_file_189(message, json_data)
+                        else:
+                            logger.error(f"189分享转存123出错")
+                            reply_thread_pool.submit(send_reply, message, f"189分享转存123出错")
                 except Exception as e:
                     fail_count += 1
                     logger.error(f"转存异常: {url}, 错误: {str(e)}")
@@ -3804,7 +3807,7 @@ def save_json_file_189(message, json_data):
         folder_cache = {}
         target_dir_name = common_path if common_path else 'JSON转存'
         # 使用UPLOAD_TARGET_PID作为根目录
-        target_dir_id = get_int_env("ENV_123_KUAKE_UPLOAD_PID", 0)
+        target_dir_id = get_int_env("ENV_123_189_UPLOAD_PID", 0)
 
         for i, file_info in enumerate(files):
             file_path = file_info.get('path', '')
