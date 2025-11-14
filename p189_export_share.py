@@ -143,7 +143,7 @@ def create_189_rapid_transfer(share_url: str, share_pwd: str = "") -> Dict[str, 
             raise ValueError("该分享需要提取码，请输入提取码")
         raise ValueError("获取189分享信息失败，可能是分享链接无效或已过期")
 
-    files = get_189_share_files(share_id, file_id, file_id, "", share_mode, share_pwd, share_code)
+    files = get_189_share_files(share_id, file_id, file_id, "", share_mode, share_pwd, share_code, is_folder)
 
     return {
         "commonPath": file_name,
@@ -154,7 +154,7 @@ def create_189_rapid_transfer(share_url: str, share_pwd: str = "") -> Dict[str, 
 
 
 def get_189_share_files(share_id: str, share_dir_file_id: str, file_id: str, path: str = "",
-                        share_mode: str = "0", access_code: str = "", share_code: str = "") -> List[Dict[str, Any]]:
+                        share_mode: str = "0", access_code: str = "", share_code: str = "", is_folder: bool = True) -> List[Dict[str, Any]]:
     """
     递归获取189网盘分享文件列表
     """
@@ -167,7 +167,7 @@ def get_189_share_files(share_id: str, share_dir_file_id: str, file_id: str, pat
             "pageSize": "100",
             "fileId": str(file_id),
             "shareDirFileId": str(share_dir_file_id),
-            "isFolder": "true",
+            "isFolder": str(is_folder),
             "shareId": str(share_id),
             "shareMode": share_mode,
             "iconOption": "5",
@@ -336,7 +336,8 @@ def simple_md5(s: str) -> str:
 if __name__ == "__main__":
     try:
         # 示例用法
-        share_url = "https://cloud.189.cn/web/share?code=2QjYnuqQRfee"
+        # share_url = "https://cloud.189.cn/t/eqEFJvRjuqee"
+        share_url = "https://cloud.189.cn/t/RFbYfm67ZzQf"
         share_pwd = ""  # 如果有密码则填写
 
         result = create_189_rapid_transfer(share_url, share_pwd)

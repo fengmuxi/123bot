@@ -4454,7 +4454,7 @@ if __name__ == "__main__":
 
     while True:
         try:            
-            bot.send_message(TG_ADMIN_USER_ID,f"🚀 123bot：当前版本 {version}\n项目地址：https://github.com/dydydd/123bot 觉得好用能否帮忙点个小星星\n\n{USE_METHOD}")
+            # bot.send_message(TG_ADMIN_USER_ID,f"🚀 123bot：当前版本 {version}\n项目地址：https://github.com/dydydd/123bot 觉得好用能否帮忙点个小星星\n\n{USE_METHOD}")
             bot.send_message(TG_ADMIN_USER_ID,disclaimer_text)
             # 版本检查已禁用（强制更新循环已移除）
             # try:
