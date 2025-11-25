@@ -11,7 +11,7 @@ on:
       - main
 
 env:
-  DOCKER_IMAGE: dydydd/123bot
+  DOCKER_IMAGE: fengmuxi/123bot
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:

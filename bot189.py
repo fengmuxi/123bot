@@ -1,3 +1,5 @@
+import base64
+import binascii
 import json
 import time
 
@@ -25,6 +27,8 @@ import schedule
 import time
 from dotenv import load_dotenv
 import os
+from p123client import P123Client, check_response
+from p189_export_share import create_189_rapid_transfer
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +52,11 @@ ENV_189_UPLOAD_PID = os.getenv("ENV_189_UPLOAD_PID","")
 
 TG_BOT_TOKEN = os.getenv("ENV_TG_BOT_TOKEN", "")
 TG_ADMIN_USER_ID = get_int_env("ENV_TG_ADMIN_USER_ID", 0)
+
+# 123 账号
+CLIENT_ID = os.getenv("ENV_123_CLIENT_ID", "")
+# 123 密码
+CLIENT_SECRET = os.getenv("ENV_123_CLIENT_SECRET", "")
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -902,7 +911,7 @@ def init_database():
     conn = sqlite3.connect(DATABASE_FILE)
     conn.execute('''CREATE TABLE IF NOT EXISTS messages
                  (msg_id INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, date TEXT, message_url TEXT, target_url TEXT, 
-                   transfer_status TEXT, transfer_time TEXT, transfer_result TEXT)''')
+                   transfer_status TEXT, transfer_time TEXT, transfer_result TEXT,msg_type TEXT)''')
     conn.commit()
     conn.close()
 
@@ -960,22 +969,22 @@ class TelegramNotifier:
         #logger.info(f"消息发送完成 - 成功: {success_count}, 失败: {fail_count}")
         return success_count > 0  # 保持原有返回值逻辑
 
-def is_message_processed(message_url):
+def is_message_processed(message_url,msg_type = "1"):
     """检查消息是否已处理（无论转存是否成功）"""
     conn = sqlite3.connect(DATABASE_FILE)
-    result = conn.execute("SELECT 1 FROM messages WHERE message_url = ?",
-                          (message_url,)).fetchone()
+    result = conn.execute("SELECT 1 FROM messages WHERE message_url = ? and msg_type = ?",
+                          (message_url,msg_type)).fetchone()
     conn.close()
     return result is not None
 
 def save_message(message_id, date, message_url, target_url,
-                 status="待转存", result="", transfer_time=None):
+                 status="待转存", result="", transfer_time=None, msg_type = "1"):
     """保存消息到数据库，包含转存状态"""
     conn = sqlite3.connect(DATABASE_FILE)
     try:
-        conn.execute("INSERT INTO messages (id, date, message_url, target_url, transfer_status, transfer_time, transfer_result) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        conn.execute("INSERT INTO messages (id, date, message_url, target_url, transfer_status, transfer_time, transfer_result, msg_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                      (message_id, date, message_url, target_url,
-                      status, transfer_time or datetime.now().isoformat(), result))
+                      status, transfer_time or datetime.now().isoformat(), result,msg_type))
         conn.commit()
         logger.info(f"已记录: {message_id} | {target_url} | 状态: {status}")
     except sqlite3.IntegrityError:
@@ -985,7 +994,7 @@ def save_message(message_id, date, message_url, target_url,
         conn.commit()
     finally:
         conn.close()
-def get_latest_messages():
+def get_latest_messages(msg_type = "1"):
     """获取最新消息（从最后一条开始检查）"""
     try:
         # 获取多个频道链接
@@ -1043,7 +1052,7 @@ def get_latest_messages():
                     target_urls = extract_target_url(f"{msg}")
                     if target_urls:
                         for url in target_urls:
-                            if not is_message_processed(message_url):
+                            if not is_message_processed(message_url,msg_type):
                                 new_messages.append((message_id, date_str, message_url, url, message_text))
                                 logger.info(message_url)
                             else:
@@ -1081,33 +1090,449 @@ def extract_target_url(text):
         return full_links
     return []
 
-def tg_189monitor(client):
+def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_md5):
     init_database()
+    link_save_method = get_int_env("ENV_189_LINK_UPLOAD_METHOD", 2)
     
     notifier = TelegramNotifier(TG_BOT_TOKEN, TG_ADMIN_USER_ID)
     logger.info(f"===== 开始检查 天翼网盘监控（{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}）=====")
-    new_messages = get_latest_messages()
-    #schedule.run_pending()
-    if new_messages:
-        for msg in new_messages:
-            message_id, date_str, message_url, target_url, message_text = msg
-            logger.info(f"处理新消息: {message_id} | {target_url}")
 
-            # 转存到115
-            result = save_189_link(client, target_url, ENV_189_UPLOAD_PID)
-            if result:
-                status = "转存成功"
-                result_msg = f"✅天翼云盘转存成功\n消息内容: {message_url}\n链接: {target_url}"
+    if link_save_method == 3 or link_save_method == 1:
+        new_messages = get_latest_messages()
+        #schedule.run_pending()
+        if new_messages:
+            for msg in new_messages:
+                message_id, date_str, message_url, target_url, message_text = msg
+                logger.info(f"[天翼网盘转存]处理新消息: {message_id} | {target_url}")
+
+                # 转存到189
+                result = save_189_link(client189, target_url, ENV_189_UPLOAD_PID)
+                if result:
+                    status = "转存成功"
+                    result_msg = f"✅天翼云盘转存成功\n消息内容: {message_url}\n链接: {target_url}"
+                else:
+                    status = "转存失败"
+                    result_msg = f"❌天翼云盘转存失败\n消息内容: {message_url}\n链接: {target_url}"
+
+                notifier.send_message(result_msg)
+
+                # 保存结果到数据库
+                save_message(message_id, date_str, message_url, target_url, status, result_msg)
+        else:
+            logger.info("[天翼网盘转存]未发现新的天翼网盘分享链接")
+
+    if link_save_method == 2 or link_save_method == 1:
+        new_messages = get_latest_messages("2")
+        if new_messages:
+            for msg in new_messages:
+                message_id, date_str, message_url, target_url, message_text = msg
+                logger.info(f"[天翼网盘转存123云盘]处理新消息: {message_id} | {target_url}")
+
+                # 获取排除关键词环境变量（多个关键词用|分隔）
+                # 当排除关键词为空时，全都不排除
+                exclude_filter = os.environ.get('ENV_189_TO_123_EXCLUDE_FILTER', '')
+                exclude_pattern = re.compile(exclude_filter) if exclude_filter else None
+
+                FILTER = os.getenv("ENV_189_TO_123_FILTER", "")
+                filter_pattern = re.compile(FILTER, re.IGNORECASE)
+
+                # 检查是否匹配过滤条件且不包含排除关键词
+                is_match = filter_pattern.search(target_url) or filter_pattern.search(message_text)
+                is_excluded = exclude_pattern and (
+                            exclude_pattern.search(target_url) or exclude_pattern.search(message_text))
+
+                if not is_match:
+                    status = "未转存"
+                    result_msg = f"消息（{message_url}）未匹配过滤条件（{FILTER}），跳过转存"
+                    logger.info(result_msg)
+                    time.sleep(1)
+                elif is_excluded:
+                    status = "未转存"
+                    result_msg = f"消息（{message_url}）包含排除关键词（{exclude_filter}），跳过转存"
+                    logger.info(result_msg)
+                    time.sleep(1)
+                else:
+                    logger.info(f"消息匹配过滤条件（{FILTER}），开始转存...")
+
+                    # 二次过滤关键词配置（当某条消息触发转存后，如进一步满足下面的要求，则转移到特定的文件夹）
+                    # 格式为：DV:1,DOLBY VISION:2,SSTA:3 即满足DV关键词转移到ID为1的文件夹，满足SSTA关键词转移到ID为3的文件夹
+                    # 如果ENV_SECOND_FILTER为空，则全部转移至ENV_123_UPLOAD_PID
+                    UPLOAD_TARGET_PID = os.getenv("ENV_189_TO_123_UPLOAD_PID", "0")
+                    ENV_SECOND_FILTER = os.getenv("ENV_189_TO_123_SECOND_FILTER", "")
+                    transfer_id = UPLOAD_TARGET_PID
+
+                    # 根据关键词筛选并设置transfer_id
+                    # ENV_SECOND_FILTER.strip() 用于去除字符串前后的空白字符（空格、制表符、换行符等）
+                    # 这样可以确保即使环境变量值前后有空格也能正确处理，避免因空白字符导致的逻辑错误
+                    # 如果去除空白后字符串不为空，则执行二次过滤逻辑
+                    if ENV_SECOND_FILTER.strip():
+                        try:
+                            # 解析二次过滤规则，格式为：关键词:文件夹ID,关键词:文件夹ID,...
+                            filter_rules = ENV_SECOND_FILTER.split(',')
+                            for rule in filter_rules:
+                                if ':' in rule:
+                                    # 分割关键词和文件夹ID，但保留关键词中的空格（如"DOLBY VISION"中的空格会被保留）
+                                    keyword, folder_id = rule.split(':', 1)
+                                    # keyword.strip() 用于确保关键词不为空字符串
+                                    # 注意：关键词内部的空格（如"DOLBY VISION"中的空格）不会被去除，会作为关键词的一部分进行匹配
+                                    if (keyword.strip() and
+                                            (keyword in message_text or
+                                             (target_url and keyword in target_url))):
+                                        transfer_id = int(folder_id.strip())
+                                        logger.info(f"消息匹配二次过滤关键词 '{keyword}'，将转存到文件夹ID: {folder_id}")
+                                        notifier.send_message(f"消息匹配二次过滤关键词 '{keyword}'，将转存到文件夹ID: {folder_id}")
+                                        break
+                        except Exception as e:
+                            logger.error(f"解析二次过滤规则失败: {e}")
+                            notifier.send_message(f"解析二次过滤规则失败: {e}")
+
+                    json_data = create_189_rapid_transfer(target_url, "")
+                    if json_data:
+                        save_json_file_189(notifier, json_data, client123, optimized_etag_to_hex, robust_normalize_md5, transfer_id, message_url, target_url)
+                        status = "转存成功"
+                        result_msg = f"✅天翼云盘转存123云盘成功\n消息内容: {message_url}\n链接: {target_url}"
+                    else:
+                        status = "转存失败"
+                        result_msg = f"❌天翼云盘转存123云盘失败\n消息内容: {message_url}\n链接: {target_url}"
+
+                notifier.send_message(result_msg)
+
+                # 保存结果到数据库
+                save_message(message_id, date_str, message_url, target_url, status, result_msg, None, "2")
             else:
-                status = "转存失败"
-                result_msg = f"❌天翼云盘转存失败\n消息内容: {message_url}\n链接: {target_url}"
+                logger.info("[天翼网盘转存123云盘]未发现新的天翼网盘分享链接")
 
-            notifier.send_message(result_msg)
 
-            # 保存结果到数据库
-            save_message(message_id, date_str, message_url, target_url, status, result_msg)
-    else:
-        logger.info("未发现新的天翼网盘分享链接")
+from collections import defaultdict
+def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, robust_normalize_md5, target_dir_id, message_url, target_url):
+    logger.info("进入123转存189")
+    try:
+        # 开始计时
+        start_time = time.time()
+        # 提取commonPath、files、totalFilesCount和totalSize
+        common_path = json_data.get('commonPath', '').strip()
+        if common_path.endswith('/'):
+            common_path = common_path[:-1]
+        files = json_data.get('files', [])
+        uses_v2_etag = json_data.get('usesBase62EtagsInExport', False)
+        total_files_count = json_data.get('totalFilesCount', len(files))
+        total_size_json = json_data.get('totalSize', 0)
+
+        if not files:
+            notifier.send_message("189分享中没有找到文件信息。")
+            return
+
+        # 使用线程池发送回复
+        notifier.send_message(f"消息（{message_url}）\n开始123转存189链接（[{target_url}]）中的{len(files)}个文件...")
+        start_time = time.time()
+
+        # 转存文件
+        results = []
+        total_files = len(files)
+        message_batch = []  # 用于存储每批消息(包括成功和失败)
+        batch_size = 0  # 批次大小计数器
+        total_size = 0  # 累计成功转存文件体积(字节)
+        skip_count = 0  # 跳过的重复文件数量
+        last_etag = None  # 上一个成功转存文件的etag
+
+        # 创建文件夹缓存
+        folder_cache = {}
+        target_dir_name = common_path if common_path else 'JSON转存'
+        # 使用UPLOAD_TARGET_PID作为根目录
+        # target_dir_id = get_int_env("ENV_123_189_UPLOAD_PID", 0)
+
+        for i, file_info in enumerate(files):
+            file_path = file_info.get('path', '')
+
+            # 构建完整文件路径
+            if common_path:
+                file_path = f"{common_path}/{file_path}"
+            etag = file_info.get('etag', '')
+            size = int(file_info.get('size', 0))
+
+            if not all([file_path, etag, size]):
+                results.append({
+                    "success": False,
+                    "file_name": file_path or "未知文件",
+                    "error": "文件信息不完整"
+                })
+                continue
+
+            try:
+                # 处理文件路径
+                path_parts = file_path.split('/')
+                file_name = path_parts.pop()
+                parent_id = target_dir_id
+
+                # 创建目录结构
+                current_path = ""
+                for part in path_parts:
+                    if not part:
+                        continue
+
+                    current_path = f"{current_path}/{part}" if current_path else part
+                    cache_key = f"{parent_id}/{current_path}"
+
+                    # 检查缓存
+                    if cache_key in folder_cache:
+                        parent_id = folder_cache[cache_key]
+                        continue
+
+                    # 创建新文件夹（带重试）
+                    retry_count = 3
+                    folder = None
+                    while retry_count > 0:
+                        try:
+                            folder = client123.fs_mkdir(part, parent_id=parent_id, duplicate=1)
+                            time.sleep(0.2)
+                            check_response(folder)
+                            break
+                        except Exception as e:
+                            retry_count -= 1
+                            logger.warning(f"创建文件夹 {part} 失败 (剩余重试: {retry_count}): {str(e)}")
+                            time.sleep(31)
+
+                    if not folder:
+                        logger.warning(f"创建文件夹失败: {part}，将使用当前目录")
+                    else:
+                        folder_id = folder["data"]["Info"]["FileId"]
+                        folder_cache[cache_key] = folder_id
+                        parent_id = folder_id
+                    # time.sleep(1/get_int_env("ENV_FILE_PER_SECOND", 5))  # 避免限流
+
+                # 处理ETag
+                if uses_v2_etag:
+                    # 实现Base62 ETag转Hex（参考123pan_bot中的实现）
+                    etag = optimized_etag_to_hex(etag, True)
+
+                # 秒传文件（带重试）
+                retry_count = 3
+                rapid_resp = None
+                while retry_count > 0:
+                    # 检查etag是否与上一个成功转存的文件相同
+                    if last_etag == etag:
+                        skip_count += 1
+                        logger.info(f"跳过重复文件: {file_path}")
+                        rapid_resp = {"data": {"Reuse": True, "Skip": True}, "code": 0}  # 标记为跳过
+                        break
+
+                    try:
+                        rapid_resp = client123.upload_file_fast(
+                            file_name=file_name,
+                            parent_id=parent_id,
+                            file_md5=robust_normalize_md5(etag),
+                            file_size=size,
+                            duplicate=1
+                        )
+                        check_response(rapid_resp)
+                        break
+                    except Exception as e:
+                        retry_count -= 1
+                        logger.warning(f"转存文件 {file_name} 失败 (剩余重试: {retry_count}): {str(e)}")
+                        if rapid_resp and ("同名文件" in rapid_resp.get("message", {})):
+                            notifier.send_message(rapid_resp.get("message", {}))
+                        if rapid_resp and ("Etag" in rapid_resp.get("message", {})):
+                            break
+                        if rapid_resp and ("文件信息" in rapid_resp.get("message", {})):
+                            notifier.send_message("请检查189的Cookie是否过期，或是否添加- NO_PROXY=*.189.cn")
+                            break
+                        time.sleep(31)
+
+                if rapid_resp is None:
+                    # 处理所有重试失败且 rapid_resp 为 None 的场景
+                    error_msg = "秒传失败：接口返回空值且重试耗尽"
+                    results.append({
+                        "success": False,
+                        "file_name": file_path,
+                        "error": error_msg
+                    })
+                    dir_path, file_name = os.path.split(file_path)
+                    msg = {
+                        'status': '❌',
+                        'dir': dir_path,
+                        'file': f"{file_name} ({error_msg})"
+                    }
+                    message_batch.append(msg)
+                    batch_size += 1
+                    logger.error(f"{msg['status']}:{msg['dir']}/{msg['file']}")
+                elif rapid_resp.get("code") == 0 and rapid_resp.get("data", {}) and rapid_resp.get("data", {}).get(
+                        "Reuse", False):
+                    # 检查是否是跳过的文件
+                    if rapid_resp.get("data", {}).get("Skip"):
+                        # 解析路径结构
+                        dir_path, file_name = os.path.split(file_path)
+                        msg = {
+                            'status': '🔄',
+                            'dir': dir_path,
+                            'file': f"{file_name} (重复跳过)"
+                        }
+                        message_batch.append(msg)
+                        batch_size += 1
+                        logger.info(f"{msg['status']}:{msg['dir']}/{msg['file']}")
+                    else:
+                        # 更新上一个成功转存文件的etag
+                        last_etag = etag
+                        results.append({
+                            "success": True,
+                            "file_name": file_path,
+                            "file_id": rapid_resp.get("data", {}).get("FileId", ""),
+                            "size": size
+                        })
+                        total_size += size
+                        # 解析路径结构
+                        dir_path, file_name = os.path.split(file_path)
+                        msg = {
+                            'status': '✅',
+                            'dir': dir_path,
+                            'file': file_name
+                        }
+                        message_batch.append(msg)
+                        batch_size += 1
+                        logger.info(f"{msg['status']}:{msg['dir']}/{msg['file']}")
+
+                else:
+                    results.append({
+                        "success": False,
+                        "file_name": file_path,
+                        "error": "此文件在123服务器不存在，无法秒传" if rapid_resp.get("data", {}) and (
+                                    rapid_resp.get("data", {}).get("Reuse", True) == False) else rapid_resp.get(
+                            "message", "未知错误")
+                    })
+                    # 解析路径结构
+                    dir_path, file_name = os.path.split(file_path)
+                    msg = {
+                        'status': '❌',
+                        'dir': dir_path,
+                        'file': f"{file_name} ({"此文件在123服务器不存在，无法秒传" if rapid_resp.get("data", {}) and (rapid_resp.get("data", {}).get("Reuse", True) == False) else rapid_resp.get("message", "未知错误")})"
+                    }
+                    message_batch.append(msg)
+                    batch_size += 1
+                    logger.info(f"{msg['status']}:{msg['dir']}/{msg['file']}")
+
+                # 每10条消息发送一次
+                if batch_size % 10 == 0:
+                    # 生成树状结构消息
+                    tree_messages = defaultdict(lambda: {'✅': [], '❌': [], '🔄': []})
+                    for entry in message_batch:
+                        tree_messages[entry['dir']][entry['status']].append(entry['file'])
+
+                    batch_msg = []
+                    for dir_path, status_files in tree_messages.items():
+                        for status, files in status_files.items():
+                            if files:
+                                batch_msg.append(f"--- {status} {dir_path}")
+                                for i, file in enumerate(files):
+                                    prefix = '      └──' if i == len(files) - 1 else '      ├──'
+                                    batch_msg.append(f"{prefix} {file}")
+                    batch_msg = "\n".join(batch_msg)
+                    logger.info(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    # notifier.send_message(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    message_batch = []
+                time.sleep(1 / get_int_env("ENV_FILE_PER_SECOND", 5))  # 避免限流
+
+            except Exception as e:
+                # 解析路径结构
+                dir_path, file_name = os.path.split(file_path)
+                msg = {
+                    'status': '❌',
+                    'dir': dir_path,
+                    'file': f"{file_name} ({str(e)})"
+                }
+                message_batch.append(msg)
+                batch_size += 1
+                logger.info(f"{msg['status']}:{msg['dir']}/{msg['file']}")
+                results.append({
+                    "success": False,
+                    "file_name": file_path,
+                    "error": str(e)
+                })
+                # 每10条消息发送一次
+                if batch_size % 10 == 0:
+                    # 生成树状结构消息
+                    tree_messages = defaultdict(lambda: {'✅': [], '❌': [], '🔄': []})
+                    for entry in message_batch:
+                        tree_messages[entry['dir']][entry['status']].append(entry['file'])
+
+                    batch_msg = []
+                    for dir_path, status_files in tree_messages.items():
+                        for status, files in status_files.items():
+                            if files:
+                                batch_msg.append(f"--- {status} {dir_path}")
+                                for i, file in enumerate(files):
+                                    prefix = '      └──' if i == len(files) - 1 else '      ├──'
+                                    batch_msg.append(f"{prefix} {file}")
+                    batch_msg = "\n".join(batch_msg)
+                    logger.error(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    # notifier.send_message(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    message_batch = []
+                time.sleep(1 / get_int_env("ENV_FILE_PER_SECOND", 5))  # 避免限流
+
+        # 发送剩余的消息
+        if message_batch:
+            # 生成树状结构消息
+            tree_messages = defaultdict(lambda: {'✅': [], '❌': [], '🔄': []})
+            for entry in message_batch:
+                tree_messages[entry['dir']][entry['status']].append(entry['file'])
+
+            batch_msg = []
+            for dir_path, status_files in tree_messages.items():
+                for status, files in status_files.items():
+                    if files:
+                        batch_msg.append(f"--- {status} {dir_path}")
+                        for i, file in enumerate(files):
+                            prefix = '      └──' if i == len(files) - 1 else '      ├──'
+                            batch_msg.append(f"{prefix} {file}")
+            batch_msg = "\n".join(batch_msg)
+            logger.info(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+            # notifier.send_message(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+
+        # 结束计时并计算耗时
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        hours, remainder = divmod(int(elapsed_time), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        # 发送转存结果
+        success_count = sum(1 for r in results if r['success'])
+        fail_count = len(results) - success_count
+
+        # 将字节转换为GB (1GB = 1024^3 B)
+        total_size_gb = total_size / (1024 ** 3)
+        size_str = f"{total_size_gb:.2f}GB"
+
+        # 处理JSON文件中的总体积
+        total_size_json_gb = total_size_json / (1024 ** 3)
+        total_size_json_str = f"{total_size_json_gb:.2f}GB"
+
+        # 计算平均文件大小
+        avg_size = total_size / success_count if success_count > 0 else 0
+        avg_size_gb = avg_size / (1024 ** 3)
+        avg_size_str = f"{avg_size_gb:.2f}GB" if avg_size_gb >= 0.01 else f"{avg_size / (1024 ** 2):.2f}MB"
+        # 添加跳过的重复文件数量显示
+        result_msg = f"✅ 123转存189完成！\n✅成功: {success_count}个\n❌失败: {fail_count}个\n🔄跳过同一目录下的重复文件: {skip_count}个\n📊成功转存体积: {size_str}\n📊平均文件大小: {avg_size_str}\n📝189分享理论文件数: {total_files_count}个\n⏱️耗时: {time_str}"
+        notifier.send_message(f"{result_msg}")
+        time.sleep(0.5)
+        # 添加失败文件详情
+        if fail_count > 0:
+            failed_files = []
+            for result in results:
+                if not result["success"]:
+                    # 简化文件名显示
+                    file_name = result["file_name"]
+                    failed_files.append(f"• {file_name}（失败原因：{result['error']}）")
+            # 分批发送所有失败文件，每批最多10个
+            batch_size = 20
+
+            for idx in range(0, len(failed_files), batch_size):
+                batch = failed_files[idx:idx + batch_size]
+                batch_msg = "❌ 失败文件 (批次 {}/{}):\n".format((idx // batch_size) + 1, (
+                            len(failed_files) + batch_size - 1) // batch_size) + "\n".join(batch)
+                notifier.send_message(batch_msg)
+                time.sleep(0.5)
+    except Exception as e:
+        logger.error(f"处理189文件失败: {str(e)}")
+        notifier.send_message(f"❌ 处理189文件失败:\n{str(e)}")
 
 if __name__ == '__main__':
     

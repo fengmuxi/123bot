@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from datetime import time as time_datetime
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from pathlib import Path
 from p123client import P123Client, check_response
 from urllib.parse import urlsplit, parse_qs
 import re
@@ -28,7 +29,51 @@ from content_check import check_porn_content
 logging.getLogger("httpx").setLevel(logging.ERROR)
 logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 logging.getLogger("telebot").setLevel(logging.ERROR)
-version = "6.7.5"  # 版本更新
+class VersionReader:
+    def __init__(self, file_path):
+        self.file_path = Path(file_path)
+        self.patterns = [
+            (r'version\s*=\s*["\']([^"\']+)["\']', '标准格式'),
+            (r'版本号\s*[：:]\s*([\d.]+)', '中文格式'),
+            (r'v(\d+\.\d+\.\d+)', 'v前缀格式'),
+            (r'(\d+\.\d+\.\d+)', '纯数字格式')
+        ]
+
+    def read_version(self):
+        """读取版本信息"""
+        if not self.file_path.exists():
+            raise FileNotFoundError(f"文件不存在: {self.file_path}")
+
+        content = self.file_path.read_text(encoding='utf-8')
+
+        for pattern, pattern_name in self.patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                # return {
+                #     'version': match.group(1),
+                #     'pattern': pattern_name,
+                #     'file': str(self.file_path)
+                # }
+                return  match.group(1)
+
+        return "6.7.5"
+
+    def get_all_versions(self):
+        """获取文件中所有可能的版本号"""
+        content = self.file_path.read_text(encoding='utf-8')
+        versions = []
+
+        for pattern, pattern_name in self.patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            for match in matches:
+                versions.append({
+                    'version': match if isinstance(match, str) else match[0],
+                    'pattern': pattern_name
+                })
+
+        return versions
+reader = VersionReader('version.txt')
+version = reader.read_version()  # 版本更新
 newest_id = 47
 # 加载.env文件中的环境变量
 load_dotenv(dotenv_path="db/user.env",override=True)
@@ -4353,7 +4398,7 @@ def main():
             if get_int_env("ENV_115_TGMONITOR_SWITCH", 0):
                 tg_115monitor()
             if get_int_env("ENV_189_TGMONITOR_SWITCH", 0):
-                tg_189monitor(client189)
+                tg_189monitor(client189,client, optimized_etag_to_hex, robust_normalize_md5)
             logger.info(f"休息{CHECK_INTERVAL}分钟，当前版本 {version}...")
             total_wait_seconds = CHECK_INTERVAL * 60
             elapsed_seconds = 0
@@ -4454,7 +4499,7 @@ if __name__ == "__main__":
 
     while True:
         try:            
-            # bot.send_message(TG_ADMIN_USER_ID,f"🚀 123bot：当前版本 {version}\n项目地址：https://github.com/dydydd/123bot 觉得好用能否帮忙点个小星星\n\n{USE_METHOD}")
+            bot.send_message(TG_ADMIN_USER_ID,f"🚀 123bot：当前版本 {version}\n项目地址：https://github.com/fengmuxi/123bot 觉得好用能否帮忙点个小星星\n\n{USE_METHOD}")
             bot.send_message(TG_ADMIN_USER_ID,disclaimer_text)
             # 版本检查已禁用（强制更新循环已移除）
             # try:

@@ -8,11 +8,8 @@ logger = logging.getLogger(__name__)
 from datetime import datetime
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from p115client import P115Client, check_response, normalize_attr as normalize_attr_simple
-from p115client import P115OSError, AuthenticationError
-from urllib.parse import urlsplit, parse_qs
+from p115client import P115Client, check_response as normalize_attr_simple
 import re
-import schedule
 banbenhao = "1.0.7"
 
 from dotenv import load_dotenv
