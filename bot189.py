@@ -1214,10 +1214,10 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
                 result = save_189_link(client189, target_url, ENV_189_UPLOAD_PID)
                 if result:
                     status = "转存成功"
-                    result_msg = f"✅天翼云盘转存成功\n消息内容: {message_url}\n链接: {target_url}"
+                    result_msg = f"[天翼网盘转存]\n✅天翼云盘转存成功\n消息内容: {message_url}\n链接: {target_url}"
                 else:
                     status = "转存失败"
-                    result_msg = f"❌天翼云盘转存失败\n消息内容: {message_url}\n链接: {target_url}"
+                    result_msg = f"[天翼网盘转存]\n❌天翼云盘转存失败\n消息内容: {message_url}\n链接: {target_url}"
 
                 notifier.send_message(result_msg)
 
@@ -1250,16 +1250,16 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
 
                 if not is_match:
                     status = "未转存"
-                    result_msg = f"消息（{message_url}）未匹配过滤条件（{FILTER}），跳过转存"
+                    result_msg = f"[天翼网盘转存123云盘]消息（{message_url}）未匹配过滤条件（{FILTER}），跳过转存"
                     logger.info(result_msg)
                     time.sleep(1)
                 elif is_excluded:
                     status = "未转存"
-                    result_msg = f"消息（{message_url}）包含排除关键词（{exclude_filter}），跳过转存"
+                    result_msg = f"[天翼网盘转存123云盘]消息（{message_url}）包含排除关键词（{exclude_filter}），跳过转存"
                     logger.info(result_msg)
                     time.sleep(1)
                 else:
-                    logger.info(f"消息匹配过滤条件（{FILTER}），开始转存...")
+                    logger.info(f"[天翼网盘转存123云盘]消息匹配过滤条件（{FILTER}），开始转存...")
 
                     # 二次过滤关键词配置（当某条消息触发转存后，如进一步满足下面的要求，则转移到特定的文件夹）
                     # 格式为：DV:1,DOLBY VISION:2,SSTA:3 即满足DV关键词转移到ID为1的文件夹，满足SSTA关键词转移到ID为3的文件夹
@@ -1286,24 +1286,24 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
                                             (keyword in message_text or
                                              (target_url and keyword in target_url))):
                                         transfer_id = int(folder_id.strip())
-                                        logger.info(f"消息匹配二次过滤关键词 '{keyword}'，将转存到文件夹ID: {folder_id}")
-                                        notifier.send_message(f"消息匹配二次过滤关键词 '{keyword}'，将转存到文件夹ID: {folder_id}")
+                                        logger.info(f"[天翼网盘转存123云盘]\n消息匹配二次过滤关键词 '{keyword}'，将转存到文件夹ID: {folder_id}")
+                                        notifier.send_message(f"[天翼网盘转存123云盘]\n消息匹配二次过滤关键词 '{keyword}'，将转存到文件夹ID: {folder_id}")
                                         break
                         except Exception as e:
-                            logger.error(f"解析二次过滤规则失败: {e}")
-                            notifier.send_message(f"解析二次过滤规则失败: {e}")
+                            logger.error(f"[天翼网盘转存123云盘]解析二次过滤规则失败: {e}")
+                            notifier.send_message(f"[天翼网盘转存123云盘]解析二次过滤规则失败: {e}")
 
                     json_data = create_189_rapid_transfer(target_url, "")
                     if json_data:
                         res = save_json_file_189(notifier, json_data, client123, optimized_etag_to_hex, robust_normalize_md5, transfer_id, message_url, target_url)
                         status = "转存成功"
-                        result_msg = f"✅天翼云盘转存123云盘成功\n消息内容: {message_url}\n链接: {target_url}"
+                        result_msg = f"[天翼网盘转存123云盘]\n✅天翼云盘转存123云盘成功\n消息内容: {message_url}\n链接: {target_url}"
                         if not res is None:
                             # 保存结果到数据库
                             save_retry_message(message_id, date_str, message_url, target_url, result_msg, None, res, transfer_id)
                     else:
                         status = "转存失败"
-                        result_msg = f"❌天翼云盘转存123云盘失败\n消息内容: {message_url}\n链接: {target_url}"
+                        result_msg = f"[天翼网盘转存123云盘]\n❌天翼云盘转存123云盘失败\n消息内容: {message_url}\n链接: {target_url}"
 
                 notifier.send_message(result_msg)
 
@@ -1320,15 +1320,15 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
     new_messages = get_retry_messages(RETRY_NUM, RETRY_TIME)
     if new_messages:
         for msg in new_messages:
-            logger.info(f"开始重试189转存123链接=>{msg}")
+            logger.info(f"[189转存123重试]开始重试189转存123链接=>{msg}")
             res = save_json_file_189(notifier, json.loads(msg['json_data']), client123, optimized_etag_to_hex, robust_normalize_md5, msg['transfer_id'],
-                               msg['message_url'], msg['target_url'],'转存重试', msg['retry_num'] + 1)
-            result_msg = f"✅天翼云盘转存123云盘成功\n消息内容: {msg['message_url']}\n链接: {msg['target_url']}"
+                               msg['message_url'], msg['target_url'],'189转存123重试', msg['retry_num'] + 1)
+            result_msg = f"[189转存123重试]\n✅天翼云盘转存123云盘成功\n消息内容: {msg['message_url']}\n链接: {msg['target_url']}"
             notifier.send_message(result_msg)
             if not res is None:
                 # 保存结果到数据库
                 update_retry_message(msg['msg_id'], msg['target_url'], res, msg['retry_num'] + 1)
-    logger.info("处理天翼网盘监控转存123云盘重试结束")
+    logger.info("[189转存123重试]处理天翼网盘监控转存123云盘重试结束")
 
 
 from collections import defaultdict
@@ -1666,7 +1666,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
 
             for idx in range(0, len(failed_files), batch_size):
                 batch = failed_files[idx:idx + batch_size]
-                batch_msg = "[" + title + "]\n❌ 失败文件 (批次 {}/{}):\n".format((idx // batch_size) + 1, (
+                batch_msg = title + "❌ 失败文件 (批次 {}/{}):\n".format((idx // batch_size) + 1, (
                             len(failed_files) + batch_size - 1) // batch_size) + "\n".join(batch)
                 notifier.send_message(batch_msg)
                 time.sleep(0.5)
