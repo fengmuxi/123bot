@@ -1149,8 +1149,9 @@ def get_retry_messages(max_retries=5, time_interval_minutes=60):
                            json_data, \
                            transfer_id
                     FROM retry_messages
-                    WHERE retry_time < datetime('now', ?)
+                    WHERE datetime(retry_time) < datetime('now', ?)
                       AND retry_num < ?
+                      AND json_data <> 'clean_retry'
                     ORDER BY retry_time ASC \
                     """
 
@@ -1200,6 +1201,7 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
     notifier = TelegramNotifier(TG_BOT_TOKEN, TG_ADMIN_USER_ID)
     logger.info(f"===== 开始检查 天翼网盘监控（{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}）=====")
 
+    logger.info("开始处理天翼网盘监控转存")
     if link_save_method == 3 or link_save_method == 1:
         new_messages = get_latest_messages()
         #schedule.run_pending()
@@ -1224,6 +1226,8 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
         else:
             logger.info("[天翼网盘转存]未发现新的天翼网盘分享链接")
 
+    logger.info("处理天翼网盘监控转存结束")
+    logger.info("开始处理天翼网盘监控转存123云盘")
     if link_save_method == 2 or link_save_method == 1:
         new_messages = get_latest_messages("2")
         if new_messages:
@@ -1308,6 +1312,8 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
             else:
                 logger.info("[天翼网盘转存123云盘]未发现新的天翼网盘分享链接")
 
+    logger.info("处理天翼网盘监控转存123云盘结束")
+    logger.info("开始处理天翼网盘监控转存123云盘重试")
     # 重试转存代码
     RETRY_NUM = os.getenv("ENV_189_TO_123_RETRY_NUM", 5)
     RETRY_TIME = os.getenv("ENV_189_TO_123_RETRY_TIME", 60)
@@ -1322,6 +1328,7 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
             if not res is None:
                 # 保存结果到数据库
                 update_retry_message(msg['msg_id'], msg['target_url'], res, msg['retry_num'] + 1)
+    logger.info("处理天翼网盘监控转存123云盘重试结束")
 
 
 from collections import defaultdict
@@ -1340,14 +1347,17 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
         total_files_count = json_data.get('totalFilesCount', len(files))
         total_size_json = json_data.get('totalSize', 0)
 
-        title = title + f'(第{str(retry_num)}次重试)' if retry_num > 0 else ''
+        if retry_num > 0:
+            title = f'[{title}](第{str(retry_num)}次重试)\n'
+        else:
+            title = f'[{title}]\n'
 
         if not files:
-            notifier.send_message(f"[{title}]\n189分享中没有找到文件信息。")
+            notifier.send_message(f"{title}189分享中没有找到文件信息。")
             return None
 
         # 使用线程池发送回复
-        notifier.send_message(f"[{title}]\n消息（{message_url}）\n开始123转存189链接（[{target_url}]）中的{len(files)}个文件...")
+        notifier.send_message(f"{title}消息（{message_url}）\n开始123转存189链接（[{target_url}]）中的{len(files)}个文件...")
         start_time = time.time()
 
         # 转存文件
@@ -1416,11 +1426,11 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                             break
                         except Exception as e:
                             retry_count -= 1
-                            logger.warning(f"[{title}]\n创建文件夹 {part} 失败 (剩余重试: {retry_count}): {str(e)}")
+                            logger.warning(f"{title}创建文件夹 {part} 失败 (剩余重试: {retry_count}): {str(e)}")
                             time.sleep(31)
 
                     if not folder:
-                        logger.warning(f"[{title}]\n创建文件夹失败: {part}，将使用当前目录")
+                        logger.warning(f"{title}创建文件夹失败: {part}，将使用当前目录")
                     else:
                         folder_id = folder["data"]["Info"]["FileId"]
                         folder_cache[cache_key] = folder_id
@@ -1439,7 +1449,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                     # 检查etag是否与上一个成功转存的文件相同
                     if last_etag == etag:
                         skip_count += 1
-                        logger.info(f"[{title}]\n跳过重复文件: {file_path}")
+                        logger.info(f"{title}跳过重复文件: {file_path}")
                         rapid_resp = {"data": {"Reuse": True, "Skip": True}, "code": 0}  # 标记为跳过
                         break
 
@@ -1455,13 +1465,13 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                         break
                     except Exception as e:
                         retry_count -= 1
-                        logger.warning(f"[{title}]\n转存文件 {file_name} 失败 (剩余重试: {retry_count}): {str(e)}")
+                        logger.warning(f"{title}转存文件 {file_name} 失败 (剩余重试: {retry_count}): {str(e)}")
                         if rapid_resp and ("同名文件" in rapid_resp.get("message", {})):
-                            notifier.send_message(f"[{title}]\n" + rapid_resp.get("message", {}))
+                            notifier.send_message(f"{title}" + rapid_resp.get("message", {}))
                         if rapid_resp and ("Etag" in rapid_resp.get("message", {})):
                             break
                         if rapid_resp and ("文件信息" in rapid_resp.get("message", {})):
-                            notifier.send_message(f"[{title}]\n请检查189的Cookie是否过期，或是否添加- NO_PROXY=*.189.cn")
+                            notifier.send_message(f"{title}请检查189的Cookie是否过期，或是否添加- NO_PROXY=*.189.cn")
                             break
                         time.sleep(31)
 
@@ -1482,7 +1492,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                     }
                     message_batch.append(msg)
                     batch_size += 1
-                    logger.error(f"[{title}]\n{msg['status']}:{msg['dir']}/{msg['file']}")
+                    logger.error(f"{title}{msg['status']}:{msg['dir']}/{msg['file']}")
                 elif rapid_resp.get("code") == 0 and rapid_resp.get("data", {}) and rapid_resp.get("data", {}).get(
                         "Reuse", False):
                     # 检查是否是跳过的文件
@@ -1496,7 +1506,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                         }
                         message_batch.append(msg)
                         batch_size += 1
-                        logger.info(f"[{title}]\n{msg['status']}:{msg['dir']}/{msg['file']}")
+                        logger.info(f"{title}{msg['status']}:{msg['dir']}/{msg['file']}")
                     else:
                         # 更新上一个成功转存文件的etag
                         last_etag = etag
@@ -1516,7 +1526,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                         }
                         message_batch.append(msg)
                         batch_size += 1
-                        logger.info(f"[{title}]\n{msg['status']}:{msg['dir']}/{msg['file']}")
+                        logger.info(f"{title}{msg['status']}:{msg['dir']}/{msg['file']}")
 
                 else:
                     results.append({
@@ -1536,7 +1546,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                     }
                     message_batch.append(msg)
                     batch_size += 1
-                    logger.info(f"[{title}]\n{msg['status']}:{msg['dir']}/{msg['file']}")
+                    logger.info(f"{title}{msg['status']}:{msg['dir']}/{msg['file']}")
 
                 # 每10条消息发送一次
                 if batch_size % 10 == 0:
@@ -1554,8 +1564,8 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                                     prefix = '      └──' if i == len(files) - 1 else '      ├──'
                                     batch_msg.append(f"{prefix} {file}")
                     batch_msg = "\n".join(batch_msg)
-                    logger.info(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
-                    # notifier.send_message(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    logger.info(f"{title}📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    # notifier.send_message(f"{title}📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
                     message_batch = []
                 time.sleep(1 / get_int_env("ENV_FILE_PER_SECOND", 5))  # 避免限流
 
@@ -1569,7 +1579,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                 }
                 message_batch.append(msg)
                 batch_size += 1
-                logger.info(f"[{title}]\n{msg['status']}:{msg['dir']}/{msg['file']}")
+                logger.info(f"{title}{msg['status']}:{msg['dir']}/{msg['file']}")
                 results.append({
                     "success": False,
                     "file_name": file_path,
@@ -1592,8 +1602,8 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                                     prefix = '      └──' if i == len(files) - 1 else '      ├──'
                                     batch_msg.append(f"{prefix} {file}")
                     batch_msg = "\n".join(batch_msg)
-                    logger.error(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
-                    # notifier.send_message(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    logger.error(f"{title}📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    # notifier.send_message(f"{title}📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
                     message_batch = []
                 time.sleep(1 / get_int_env("ENV_FILE_PER_SECOND", 5))  # 避免限流
 
@@ -1613,8 +1623,8 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                             prefix = '      └──' if i == len(files) - 1 else '      ├──'
                             batch_msg.append(f"{prefix} {file}")
             batch_msg = "\n".join(batch_msg)
-            logger.info(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
-            # notifier.send_message(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+            logger.info(f"{title}📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+            # notifier.send_message(f"{title}📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
 
         # 结束计时并计算耗时
         end_time = time.time()
@@ -1640,7 +1650,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
         avg_size_gb = avg_size / (1024 ** 3)
         avg_size_str = f"{avg_size_gb:.2f}GB" if avg_size_gb >= 0.01 else f"{avg_size / (1024 ** 2):.2f}MB"
         # 添加跳过的重复文件数量显示
-        result_msg = f"[{title}]\n✅ 123转存189完成！\n✅成功: {success_count}个\n❌失败: {fail_count}个\n🔄跳过同一目录下的重复文件: {skip_count}个\n📊成功转存体积: {size_str}\n📊平均文件大小: {avg_size_str}\n📝189分享理论文件数: {total_files_count}个\n⏱️耗时: {time_str}"
+        result_msg = f"{title}✅ 123转存189完成！\n✅成功: {success_count}个\n❌失败: {fail_count}个\n🔄跳过同一目录下的重复文件: {skip_count}个\n📊成功转存体积: {size_str}\n📊平均文件大小: {avg_size_str}\n📝189分享理论文件数: {total_files_count}个\n⏱️耗时: {time_str}"
         notifier.send_message(f"{result_msg}")
         time.sleep(0.5)
         # 添加失败文件详情
@@ -1668,11 +1678,15 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
             json_data['totalSize'] = sum(f["size"] for f in error_files)
             return json.dumps(json_data)
 
+        # 重试完成清除重新信息
+        if not len(error_files) > 0 and retry_num > 0:
+            return 'clean_retry'
+
         return None
 
     except Exception as e:
-        logger.error(f"[{title}]\n处理189文件失败: {str(e)}")
-        notifier.send_message(f"[{title}]\n❌ 处理189文件失败:\n{str(e)}")
+        logger.error(f"{title}处理189文件失败: {str(e)}")
+        notifier.send_message(f"{title}❌ 处理189文件失败:\n{str(e)}")
         return None
 
 if __name__ == '__main__':
