@@ -910,8 +910,33 @@ def init_database():
     """初始化数据库（增加转存状态字段）"""
     conn = sqlite3.connect(DATABASE_FILE)
     conn.execute('''CREATE TABLE IF NOT EXISTS messages
-                 (msg_id INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, date TEXT, message_url TEXT, target_url TEXT, 
-                   transfer_status TEXT, transfer_time TEXT, transfer_result TEXT,msg_type TEXT)''')
+                    (
+                        msg_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id              TEXT,
+                        date            TEXT,
+                        message_url     TEXT,
+                        target_url      TEXT,
+                        transfer_status TEXT,
+                        transfer_time   TEXT,
+                        transfer_result TEXT,
+                        msg_type        TEXT
+                    )''')
+    conn.execute("DELETE FROM messages WHERE datetime(transfer_time) < datetime(?,'-7 days')",(datetime.now().isoformat(),))
+    conn.execute('''CREATE TABLE IF NOT EXISTS retry_messages
+                    (
+                        msg_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id              TEXT,
+                        date            TEXT,
+                        message_url     TEXT,
+                        target_url      TEXT,
+                        transfer_time   TEXT,
+                        transfer_result TEXT,
+                        retry_num       INT,
+                        retry_time      TEXT,
+                        json_data       TEXT,
+                        transfer_id     TEXT
+                    )''')
+    conn.execute("DELETE FROM retry_messages WHERE datetime(transfer_time) < datetime(?,'-7 days')",(datetime.now().isoformat(),))
     conn.commit()
     conn.close()
 
@@ -994,6 +1019,31 @@ def save_message(message_id, date, message_url, target_url,
         conn.commit()
     finally:
         conn.close()
+
+def save_retry_message(message_id, date, message_url, target_url, result="", transfer_time=None, json_data = None, transfer_id = None, retry_num = 0):
+    """保存重试消息到数据库"""
+    conn = sqlite3.connect(DATABASE_FILE)
+    try:
+        conn.execute("INSERT INTO retry_messages (id, date, message_url, target_url, transfer_time, transfer_result, retry_num, retry_time, json_data, transfer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (message_id, date, message_url, target_url,
+                        transfer_time or datetime.now().isoformat(), result, retry_num, transfer_time or datetime.now().isoformat(), json_data, transfer_id))
+        conn.commit()
+        logger.info(f"重试已记录: {message_id} | {target_url} | 重试次数: {retry_num}")
+    finally:
+        conn.close()
+
+def update_retry_message(message_id, target_url, json_data = None, retry_num = 0):
+    """修改重试消息到数据库"""
+    conn = sqlite3.connect(DATABASE_FILE)
+    try:
+        # 更新已有记录的状态
+        conn.execute("UPDATE retry_messages SET retry_time=?, retry_num=?, json_data=? WHERE msg_id=?",
+                     (datetime.now().isoformat(), retry_num, json_data, message_id))
+        conn.commit()
+        logger.info(f"重试已记录: {message_id} | {target_url} | 重试次数: {retry_num}")
+    finally:
+        conn.close()
+
 def get_latest_messages(msg_type = "1"):
     """获取最新消息（从最后一条开始检查）"""
     try:
@@ -1072,6 +1122,59 @@ def get_latest_messages(msg_type = "1"):
     except requests.exceptions.RequestException as e:
         logger.error(f"网络请求失败: {str(e)[:100]}")
         return []
+
+
+def get_retry_messages(max_retries=5, time_interval_minutes=60):
+    """获取需要重试的消息
+
+    Args:
+        max_retries: 最大重试次数，默认5次
+        time_interval_minutes: 时间间隔（分钟），默认60分钟
+
+    Returns:
+        list: 重试消息字典列表
+    """
+    try:
+        with sqlite3.connect(DATABASE_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+
+            # 使用参数化查询，提高可读性和安全性
+            query = """
+                    SELECT msg_id, \
+                           date, \
+                           message_url, \
+                           target_url, \
+                           retry_num, \
+                           retry_time, \
+                           json_data, \
+                           transfer_id
+                    FROM retry_messages
+                    WHERE retry_time < datetime('now', ?)
+                      AND retry_num < ?
+                    ORDER BY retry_time ASC \
+                    """
+
+            time_modifier = f"-{time_interval_minutes} minutes"
+
+            rows = conn.execute(query, (time_modifier, max_retries)).fetchall()
+
+            # 使用列表推导式简化代码
+            retry_messages = [dict(row) for row in rows]
+
+            if retry_messages:
+                logger.info(f"获取到 {len(retry_messages)} 条需要重试的消息")
+            else:
+                logger.debug("未找到需要重试的消息")
+
+            return retry_messages
+
+    except sqlite3.Error as e:
+        logger.error(f"数据库错误: {str(e)}")
+        return []
+    except Exception as e:
+        logger.error(f"获取重试消息错误: {str(e)}")
+        return []
+
 
 def extract_target_url(text):
     import re
@@ -1188,9 +1291,12 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
 
                     json_data = create_189_rapid_transfer(target_url, "")
                     if json_data:
-                        save_json_file_189(notifier, json_data, client123, optimized_etag_to_hex, robust_normalize_md5, transfer_id, message_url, target_url)
+                        res = save_json_file_189(notifier, json_data, client123, optimized_etag_to_hex, robust_normalize_md5, transfer_id, message_url, target_url)
                         status = "转存成功"
                         result_msg = f"✅天翼云盘转存123云盘成功\n消息内容: {message_url}\n链接: {target_url}"
+                        if not res is None:
+                            # 保存结果到数据库
+                            save_retry_message(message_id, date_str, message_url, target_url, result_msg, None, res, transfer_id)
                     else:
                         status = "转存失败"
                         result_msg = f"❌天翼云盘转存123云盘失败\n消息内容: {message_url}\n链接: {target_url}"
@@ -1202,15 +1308,31 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
             else:
                 logger.info("[天翼网盘转存123云盘]未发现新的天翼网盘分享链接")
 
+    # 重试转存代码
+    RETRY_NUM = os.getenv("ENV_189_TO_123_RETRY_NUM", 5)
+    RETRY_TIME = os.getenv("ENV_189_TO_123_RETRY_TIME", 60)
+    new_messages = get_retry_messages(RETRY_NUM, RETRY_TIME)
+    if new_messages:
+        for msg in new_messages:
+            logger.info(f"开始重试189转存123链接=>{msg}")
+            res = save_json_file_189(notifier, json.loads(msg['json_data']), client123, optimized_etag_to_hex, robust_normalize_md5, msg['transfer_id'],
+                               msg['message_url'], msg['target_url'],'转存重试', msg['retry_num'] + 1)
+            result_msg = f"✅天翼云盘转存123云盘成功\n消息内容: {msg['message_url']}\n链接: {msg['target_url']}"
+            notifier.send_message(result_msg)
+            if not res is None:
+                # 保存结果到数据库
+                update_retry_message(msg['msg_id'], msg['target_url'], res, msg['retry_num'] + 1)
+
 
 from collections import defaultdict
-def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, robust_normalize_md5, target_dir_id, message_url, target_url):
+def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, robust_normalize_md5, target_dir_id, message_url, target_url, title = '自动转存', retry_num = 0):
     logger.info("进入123转存189")
     try:
         # 开始计时
         start_time = time.time()
         # 提取commonPath、files、totalFilesCount和totalSize
         common_path = json_data.get('commonPath', '').strip()
+        common_path = re.sub(r'[\\/:*?|><"]', '', common_path)
         if common_path.endswith('/'):
             common_path = common_path[:-1]
         files = json_data.get('files', [])
@@ -1218,12 +1340,14 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
         total_files_count = json_data.get('totalFilesCount', len(files))
         total_size_json = json_data.get('totalSize', 0)
 
+        title = title + f'(第{str(retry_num)}次重试)' if retry_num > 0 else ''
+
         if not files:
-            notifier.send_message("189分享中没有找到文件信息。")
-            return
+            notifier.send_message(f"[{title}]\n189分享中没有找到文件信息。")
+            return None
 
         # 使用线程池发送回复
-        notifier.send_message(f"消息（{message_url}）\n开始123转存189链接（[{target_url}]）中的{len(files)}个文件...")
+        notifier.send_message(f"[{title}]\n消息（{message_url}）\n开始123转存189链接（[{target_url}]）中的{len(files)}个文件...")
         start_time = time.time()
 
         # 转存文件
@@ -1240,6 +1364,9 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
         target_dir_name = common_path if common_path else 'JSON转存'
         # 使用UPLOAD_TARGET_PID作为根目录
         # target_dir_id = get_int_env("ENV_123_189_UPLOAD_PID", 0)
+
+        # files失败的项
+        error_files = []
 
         for i, file_info in enumerate(files):
             file_path = file_info.get('path', '')
@@ -1289,11 +1416,11 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                             break
                         except Exception as e:
                             retry_count -= 1
-                            logger.warning(f"创建文件夹 {part} 失败 (剩余重试: {retry_count}): {str(e)}")
+                            logger.warning(f"[{title}]\n创建文件夹 {part} 失败 (剩余重试: {retry_count}): {str(e)}")
                             time.sleep(31)
 
                     if not folder:
-                        logger.warning(f"创建文件夹失败: {part}，将使用当前目录")
+                        logger.warning(f"[{title}]\n创建文件夹失败: {part}，将使用当前目录")
                     else:
                         folder_id = folder["data"]["Info"]["FileId"]
                         folder_cache[cache_key] = folder_id
@@ -1312,7 +1439,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                     # 检查etag是否与上一个成功转存的文件相同
                     if last_etag == etag:
                         skip_count += 1
-                        logger.info(f"跳过重复文件: {file_path}")
+                        logger.info(f"[{title}]\n跳过重复文件: {file_path}")
                         rapid_resp = {"data": {"Reuse": True, "Skip": True}, "code": 0}  # 标记为跳过
                         break
 
@@ -1328,13 +1455,13 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                         break
                     except Exception as e:
                         retry_count -= 1
-                        logger.warning(f"转存文件 {file_name} 失败 (剩余重试: {retry_count}): {str(e)}")
+                        logger.warning(f"[{title}]\n转存文件 {file_name} 失败 (剩余重试: {retry_count}): {str(e)}")
                         if rapid_resp and ("同名文件" in rapid_resp.get("message", {})):
-                            notifier.send_message(rapid_resp.get("message", {}))
+                            notifier.send_message(f"[{title}]\n" + rapid_resp.get("message", {}))
                         if rapid_resp and ("Etag" in rapid_resp.get("message", {})):
                             break
                         if rapid_resp and ("文件信息" in rapid_resp.get("message", {})):
-                            notifier.send_message("请检查189的Cookie是否过期，或是否添加- NO_PROXY=*.189.cn")
+                            notifier.send_message(f"[{title}]\n请检查189的Cookie是否过期，或是否添加- NO_PROXY=*.189.cn")
                             break
                         time.sleep(31)
 
@@ -1346,6 +1473,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                         "file_name": file_path,
                         "error": error_msg
                     })
+                    error_files.append(file_info)
                     dir_path, file_name = os.path.split(file_path)
                     msg = {
                         'status': '❌',
@@ -1354,7 +1482,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                     }
                     message_batch.append(msg)
                     batch_size += 1
-                    logger.error(f"{msg['status']}:{msg['dir']}/{msg['file']}")
+                    logger.error(f"[{title}]\n{msg['status']}:{msg['dir']}/{msg['file']}")
                 elif rapid_resp.get("code") == 0 and rapid_resp.get("data", {}) and rapid_resp.get("data", {}).get(
                         "Reuse", False):
                     # 检查是否是跳过的文件
@@ -1368,7 +1496,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                         }
                         message_batch.append(msg)
                         batch_size += 1
-                        logger.info(f"{msg['status']}:{msg['dir']}/{msg['file']}")
+                        logger.info(f"[{title}]\n{msg['status']}:{msg['dir']}/{msg['file']}")
                     else:
                         # 更新上一个成功转存文件的etag
                         last_etag = etag
@@ -1388,7 +1516,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                         }
                         message_batch.append(msg)
                         batch_size += 1
-                        logger.info(f"{msg['status']}:{msg['dir']}/{msg['file']}")
+                        logger.info(f"[{title}]\n{msg['status']}:{msg['dir']}/{msg['file']}")
 
                 else:
                     results.append({
@@ -1398,6 +1526,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                                     rapid_resp.get("data", {}).get("Reuse", True) == False) else rapid_resp.get(
                             "message", "未知错误")
                     })
+                    error_files.append(file_info)
                     # 解析路径结构
                     dir_path, file_name = os.path.split(file_path)
                     msg = {
@@ -1407,7 +1536,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                     }
                     message_batch.append(msg)
                     batch_size += 1
-                    logger.info(f"{msg['status']}:{msg['dir']}/{msg['file']}")
+                    logger.info(f"[{title}]\n{msg['status']}:{msg['dir']}/{msg['file']}")
 
                 # 每10条消息发送一次
                 if batch_size % 10 == 0:
@@ -1425,8 +1554,8 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                                     prefix = '      └──' if i == len(files) - 1 else '      ├──'
                                     batch_msg.append(f"{prefix} {file}")
                     batch_msg = "\n".join(batch_msg)
-                    logger.info(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
-                    # notifier.send_message(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    logger.info(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    # notifier.send_message(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
                     message_batch = []
                 time.sleep(1 / get_int_env("ENV_FILE_PER_SECOND", 5))  # 避免限流
 
@@ -1440,12 +1569,13 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                 }
                 message_batch.append(msg)
                 batch_size += 1
-                logger.info(f"{msg['status']}:{msg['dir']}/{msg['file']}")
+                logger.info(f"[{title}]\n{msg['status']}:{msg['dir']}/{msg['file']}")
                 results.append({
                     "success": False,
                     "file_name": file_path,
                     "error": str(e)
                 })
+                error_files.append(file_info)
                 # 每10条消息发送一次
                 if batch_size % 10 == 0:
                     # 生成树状结构消息
@@ -1462,8 +1592,8 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                                     prefix = '      └──' if i == len(files) - 1 else '      ├──'
                                     batch_msg.append(f"{prefix} {file}")
                     batch_msg = "\n".join(batch_msg)
-                    logger.error(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
-                    # notifier.send_message(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    logger.error(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+                    # notifier.send_message(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
                     message_batch = []
                 time.sleep(1 / get_int_env("ENV_FILE_PER_SECOND", 5))  # 避免限流
 
@@ -1483,8 +1613,8 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                             prefix = '      └──' if i == len(files) - 1 else '      ├──'
                             batch_msg.append(f"{prefix} {file}")
             batch_msg = "\n".join(batch_msg)
-            logger.info(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
-            # notifier.send_message(f"📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+            logger.info(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
+            # notifier.send_message(f"[{title}]\n📊 {batch_size}/{total_files_count} ({int(batch_size / total_files_count * 100)}%) 个文件已处理\n\n{batch_msg}")
 
         # 结束计时并计算耗时
         end_time = time.time()
@@ -1495,7 +1625,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
 
         # 发送转存结果
         success_count = sum(1 for r in results if r['success'])
-        fail_count = len(results) - success_count
+        fail_count = len(error_files)
 
         # 将字节转换为GB (1GB = 1024^3 B)
         total_size_gb = total_size / (1024 ** 3)
@@ -1510,7 +1640,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
         avg_size_gb = avg_size / (1024 ** 3)
         avg_size_str = f"{avg_size_gb:.2f}GB" if avg_size_gb >= 0.01 else f"{avg_size / (1024 ** 2):.2f}MB"
         # 添加跳过的重复文件数量显示
-        result_msg = f"✅ 123转存189完成！\n✅成功: {success_count}个\n❌失败: {fail_count}个\n🔄跳过同一目录下的重复文件: {skip_count}个\n📊成功转存体积: {size_str}\n📊平均文件大小: {avg_size_str}\n📝189分享理论文件数: {total_files_count}个\n⏱️耗时: {time_str}"
+        result_msg = f"[{title}]\n✅ 123转存189完成！\n✅成功: {success_count}个\n❌失败: {fail_count}个\n🔄跳过同一目录下的重复文件: {skip_count}个\n📊成功转存体积: {size_str}\n📊平均文件大小: {avg_size_str}\n📝189分享理论文件数: {total_files_count}个\n⏱️耗时: {time_str}"
         notifier.send_message(f"{result_msg}")
         time.sleep(0.5)
         # 添加失败文件详情
@@ -1526,13 +1656,24 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
 
             for idx in range(0, len(failed_files), batch_size):
                 batch = failed_files[idx:idx + batch_size]
-                batch_msg = "❌ 失败文件 (批次 {}/{}):\n".format((idx // batch_size) + 1, (
+                batch_msg = "[" + title + "]\n❌ 失败文件 (批次 {}/{}):\n".format((idx // batch_size) + 1, (
                             len(failed_files) + batch_size - 1) // batch_size) + "\n".join(batch)
                 notifier.send_message(batch_msg)
                 time.sleep(0.5)
+
+        # 进入重试队列
+        if len(error_files) > 0:
+            json_data['files'] = error_files
+            json_data['totalFilesCount'] = len(error_files)
+            json_data['totalSize'] = sum(f["size"] for f in error_files)
+            return json.dumps(json_data)
+
+        return None
+
     except Exception as e:
-        logger.error(f"处理189文件失败: {str(e)}")
-        notifier.send_message(f"❌ 处理189文件失败:\n{str(e)}")
+        logger.error(f"[{title}]\n处理189文件失败: {str(e)}")
+        notifier.send_message(f"[{title}]\n❌ 处理189文件失败:\n{str(e)}")
+        return None
 
 if __name__ == '__main__':
     

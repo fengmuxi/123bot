@@ -640,6 +640,8 @@ def init_database():
     conn.execute('''CREATE TABLE IF NOT EXISTS messages
                   (msg_id INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, date TEXT, message_url TEXT, target_url TEXT, 
                    transfer_status TEXT, transfer_time TEXT, transfer_result TEXT)''')
+    conn.execute("DELETE FROM messages WHERE datetime(transfer_time) < datetime(?,'-7 days')",
+                 (datetime.now().isoformat(),))
     conn.commit()
     conn.close()
 
