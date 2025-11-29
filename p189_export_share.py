@@ -1,3 +1,4 @@
+import logging
 import re
 import time
 import hashlib
@@ -8,7 +9,8 @@ import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Any
 
 
-def create_189_rapid_transfer(share_url: str, share_pwd: str = "") -> Dict[str, Any]:
+def create_189_rapid_transfer(share_url: str, share_pwd: str = "") -> dict[
+                                                                          str, str | list[dict[str, Any]] | int] | None:
     """
     创建189网盘秒传JSON
 
@@ -19,138 +21,142 @@ def create_189_rapid_transfer(share_url: str, share_pwd: str = "") -> Dict[str, 
     Returns:
         秒传JSON对象
     """
-    # 支持两种格式: /t/xxx 或 ?code=xxx
-    match = re.search(r'/t/([a-zA-Z0-9]+)', share_url)
-    if not match:
-        match = re.search(r'[?&]code=([a-zA-Z0-9]+)', share_url)
-    if not match:
-        raise ValueError(
-            "无效的189网盘分享链接 (支持格式: https://cloud.189.cn/t/xxx 或 https://cloud.189.cn/web/share?code=xxx)")
+    try:
+        # 支持两种格式: /t/xxx 或 ?code=xxx
+        match = re.search(r'/t/([a-zA-Z0-9]+)', share_url)
+        if not match:
+            match = re.search(r'[?&]code=([a-zA-Z0-9]+)', share_url)
+        if not match:
+            raise ValueError(
+                "无效的189网盘分享链接 (支持格式: https://cloud.189.cn/t/xxx 或 https://cloud.189.cn/web/share?code=xxx)")
 
-    share_code = match.group(1)
-    share_id = share_code  # 默认使用share_code
+        share_code = match.group(1)
+        share_id = share_code  # 默认使用share_code
 
-    # 如果有密码，需要先调用checkAccessCode获取真正的share_id
-    if share_pwd:
-        print(f"[189] 验证访问码...")
-        check_url = f"https://cloud.189.cn/api/open/share/checkAccessCode.action?shareCode={share_code}&accessCode={share_pwd}"
+        # 如果有密码，需要先调用checkAccessCode获取真正的share_id
+        if share_pwd:
+            print(f"[189] 验证访问码...")
+            check_url = f"https://cloud.189.cn/api/open/share/checkAccessCode.action?shareCode={share_code}&accessCode={share_pwd}"
+
+            headers = {
+                "Accept": "application/json;charset=UTF-8",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Referer": "https://cloud.189.cn/web/main/"
+            }
+
+            req = urllib.request.Request(check_url, headers=headers)
+            try:
+                with urllib.request.urlopen(req) as response:
+                    check_text = response.read().decode('utf-8')
+                    print(f"[189] checkAccessCode响应: {check_text[:200]}")
+
+                    try:
+                        check_data = json.loads(check_text)
+                        if check_data.get('shareId'):
+                            share_id = check_data['shareId']
+                            print(f"[189] 从checkAccessCode获取到share_id: {share_id}")
+                    except json.JSONDecodeError:
+                        print("[189] checkAccessCode解析失败，继续使用share_code")
+            except Exception as e:
+                print(f"[189] checkAccessCode请求失败: {e}")
+
+        # 构建请求参数
+        params = {
+            "shareCode": share_code,
+            "accessCode": share_pwd or ""
+        }
+
+        # 添加认证签名
+        timestamp = str(int(time.time() * 1000))
+        app_key = "600100422"
+
+        sign_data = params.copy()
+        sign_data.update({
+            "Timestamp": timestamp,
+            "AppKey": app_key
+        })
+
+        signature = get_189_signature(sign_data)
+
+        query_string = urllib.parse.urlencode(params)
+        api_url = f"https://cloud.189.cn/api/open/share/getShareInfoByCodeV2.action?{query_string}"
+
+        print(f"[189] 请求分享信息: {api_url}")
+        print(f"[189] 签名参数: timestamp={timestamp}, app_key={app_key}, signature={signature}")
 
         headers = {
             "Accept": "application/json;charset=UTF-8",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Sign-Type": "1",
+            "Signature": signature,
+            "Timestamp": timestamp,
+            "AppKey": app_key,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36",
             "Referer": "https://cloud.189.cn/web/main/"
         }
 
-        req = urllib.request.Request(check_url, headers=headers)
-        try:
-            with urllib.request.urlopen(req) as response:
-                check_text = response.read().decode('utf-8')
-                print(f"[189] checkAccessCode响应: {check_text[:200]}")
+        req = urllib.request.Request(api_url, headers=headers)
+        with urllib.request.urlopen(req) as response:
+            text = response.read().decode('utf-8')
 
-                try:
-                    check_data = json.loads(check_text)
-                    if check_data.get('shareId'):
-                        share_id = check_data['shareId']
-                        print(f"[189] 从checkAccessCode获取到share_id: {share_id}")
-                except json.JSONDecodeError:
-                    print("[189] checkAccessCode解析失败，继续使用share_code")
-        except Exception as e:
-            print(f"[189] checkAccessCode请求失败: {e}")
+        print(f"[189] 响应状态: {response.status}")
+        print(f"[189] 响应内容: {text}")
 
-    # 构建请求参数
-    params = {
-        "shareCode": share_code,
-        "accessCode": share_pwd or ""
-    }
+        # 尝试解析为JSON或XML
+        data = None
+        if text.strip().startswith('<'):
+            # XML响应
+            print("[189] 检测到XML响应，开始解析...")
+            data = parse_xml_response(text)
+            print(f"[189] XML解析结果: {json.dumps(data, indent=2, ensure_ascii=False)}")
+        else:
+            # JSON响应 - 修复大整数精度问题
+            print("[189] 检测到JSON响应")
+            try:
+                # 使用正则表达式将大整数ID转换为字符串
+                fixed_text = re.sub(r'"id":"?(\d{15,})"?', r'"id":"\1"', text)
+                fixed_text = re.sub(r'"fileId":"?(\d{15,})"?', r'"fileId":"\1"', fixed_text)
+                fixed_text = re.sub(r'"parentId":"?(\d{15,})"?', r'"parentId":"\1"', fixed_text)
+                fixed_text = re.sub(r'"shareId":"?(\d{15,})"?', r'"shareId":"\1"', fixed_text)
+                data = json.loads(fixed_text)
+            except json.JSONDecodeError as e:
+                print(f"[189] JSON解析失败: {e}")
+                data = json.loads(text)  # 回退到普通解析
 
-    # 添加认证签名
-    timestamp = str(int(time.time() * 1000))
-    app_key = "600100422"
+        if data.get('res_code') != 0:
+            if data.get('res_code') == 40401 and not share_pwd:
+                raise ValueError("该分享需要提取码，请输入提取码")
+            raise ValueError(f"获取189分享信息失败: {data.get('res_message', '未知错误')}")
 
-    sign_data = params.copy()
-    sign_data.update({
-        "Timestamp": timestamp,
-        "AppKey": app_key
-    })
+        # 如果getShareInfoByCodeV2返回了shareId，更新它
+        if data.get('shareId') and data['shareId'] != share_code:
+            share_id = data['shareId']
+            print(f"[189] 从getShareInfoByCodeV2更新share_id: {share_id}")
 
-    signature = get_189_signature(sign_data)
+        file_name = data.get('fileName', '')
+        file_id = data.get('fileId', '')
+        need_access_code = data.get('needAccessCode', '0')
+        is_folder = data.get('isFolder', False)
+        share_mode = data.get('shareMode', '0')
 
-    query_string = urllib.parse.urlencode(params)
-    api_url = f"https://cloud.189.cn/api/open/share/getShareInfoByCodeV2.action?{query_string}"
+        print(
+            f"[189] 分享信息: share_id={share_id}, file_id={file_id}, need_access_code={need_access_code}, is_folder={is_folder}, share_mode={share_mode}, share_code={share_code}, share_pwd={share_pwd}")
 
-    print(f"[189] 请求分享信息: {api_url}")
-    print(f"[189] 签名参数: timestamp={timestamp}, app_key={app_key}, signature={signature}")
+        if not share_id or not file_id:
+            if need_access_code == "1" and not share_pwd:
+                raise ValueError("该分享需要提取码，请输入提取码")
+            raise ValueError("获取189分享信息失败，可能是分享链接无效或已过期")
 
-    headers = {
-        "Accept": "application/json;charset=UTF-8",
-        "Sign-Type": "1",
-        "Signature": signature,
-        "Timestamp": timestamp,
-        "AppKey": app_key,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36",
-        "Referer": "https://cloud.189.cn/web/main/"
-    }
+        files = get_189_share_files(share_id, file_id, file_id, "", share_mode, share_pwd, share_code, is_folder)
 
-    req = urllib.request.Request(api_url, headers=headers)
-    with urllib.request.urlopen(req) as response:
-        text = response.read().decode('utf-8')
-
-    print(f"[189] 响应状态: {response.status}")
-    print(f"[189] 响应内容: {text}")
-
-    # 尝试解析为JSON或XML
-    data = None
-    if text.strip().startswith('<'):
-        # XML响应
-        print("[189] 检测到XML响应，开始解析...")
-        data = parse_xml_response(text)
-        print(f"[189] XML解析结果: {json.dumps(data, indent=2, ensure_ascii=False)}")
-    else:
-        # JSON响应 - 修复大整数精度问题
-        print("[189] 检测到JSON响应")
-        try:
-            # 使用正则表达式将大整数ID转换为字符串
-            fixed_text = re.sub(r'"id":"?(\d{15,})"?', r'"id":"\1"', text)
-            fixed_text = re.sub(r'"fileId":"?(\d{15,})"?', r'"fileId":"\1"', fixed_text)
-            fixed_text = re.sub(r'"parentId":"?(\d{15,})"?', r'"parentId":"\1"', fixed_text)
-            fixed_text = re.sub(r'"shareId":"?(\d{15,})"?', r'"shareId":"\1"', fixed_text)
-            data = json.loads(fixed_text)
-        except json.JSONDecodeError as e:
-            print(f"[189] JSON解析失败: {e}")
-            data = json.loads(text)  # 回退到普通解析
-
-    if data.get('res_code') != 0:
-        if data.get('res_code') == 40401 and not share_pwd:
-            raise ValueError("该分享需要提取码，请输入提取码")
-        raise ValueError(f"获取189分享信息失败: {data.get('res_message', '未知错误')}")
-
-    # 如果getShareInfoByCodeV2返回了shareId，更新它
-    if data.get('shareId') and data['shareId'] != share_code:
-        share_id = data['shareId']
-        print(f"[189] 从getShareInfoByCodeV2更新share_id: {share_id}")
-
-    file_name = data.get('fileName', '')
-    file_id = data.get('fileId', '')
-    need_access_code = data.get('needAccessCode', '0')
-    is_folder = data.get('isFolder', False)
-    share_mode = data.get('shareMode', '0')
-
-    print(
-        f"[189] 分享信息: share_id={share_id}, file_id={file_id}, need_access_code={need_access_code}, is_folder={is_folder}, share_mode={share_mode}, share_code={share_code}, share_pwd={share_pwd}")
-
-    if not share_id or not file_id:
-        if need_access_code == "1" and not share_pwd:
-            raise ValueError("该分享需要提取码，请输入提取码")
-        raise ValueError("获取189分享信息失败，可能是分享链接无效或已过期")
-
-    files = get_189_share_files(share_id, file_id, file_id, "", share_mode, share_pwd, share_code, is_folder)
-
-    return {
-        "commonPath": file_name,
-        "files": files,
-        "totalFilesCount": len(files),
-        "totalSize": sum(f["size"] for f in files),
-    }
+        return {
+            "commonPath": file_name,
+            "files": files,
+            "totalFilesCount": len(files),
+            "totalSize": sum(f["size"] for f in files),
+        }
+    except Exception as e:
+        logging.info(f'189链接转123秒传json文件异常=>{str(e)}')
+        return None
 
 
 def get_189_share_files(share_id: str, share_dir_file_id: str, file_id: str, path: str = "",
