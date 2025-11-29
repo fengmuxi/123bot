@@ -934,7 +934,8 @@ def init_database():
                         retry_num       INT,
                         retry_time      TEXT,
                         json_data       TEXT,
-                        transfer_id     TEXT
+                        transfer_id     TEXT,
+                        status          TEXT
                     )''')
     conn.execute("DELETE FROM retry_messages WHERE datetime(transfer_time) < datetime(?,'-7 days')",(datetime.now().isoformat(),))
     conn.commit()
@@ -1024,21 +1025,21 @@ def save_retry_message(message_id, date, message_url, target_url, result="", tra
     """保存重试消息到数据库"""
     conn = sqlite3.connect(DATABASE_FILE)
     try:
-        conn.execute("INSERT INTO retry_messages (id, date, message_url, target_url, transfer_time, transfer_result, retry_num, retry_time, json_data, transfer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        conn.execute("INSERT INTO retry_messages (id, date, message_url, target_url, transfer_time, transfer_result, retry_num, retry_time, json_data, transfer_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (message_id, date, message_url, target_url,
-                        transfer_time or datetime.now().isoformat(), result, retry_num, transfer_time or datetime.now().isoformat(), json_data, transfer_id))
+                        transfer_time or datetime.now().isoformat(), result, retry_num, transfer_time or datetime.now().isoformat(), json_data, transfer_id, '0'))
         conn.commit()
         logger.info(f"重试已记录: {message_id} | {target_url} | 重试次数: {retry_num}")
     finally:
         conn.close()
 
-def update_retry_message(message_id, target_url, json_data = None, retry_num = 0):
+def update_retry_message(message_id, target_url, json_data = None, retry_num = 0, status = '0'):
     """修改重试消息到数据库"""
     conn = sqlite3.connect(DATABASE_FILE)
     try:
         # 更新已有记录的状态
-        conn.execute("UPDATE retry_messages SET retry_time=?, retry_num=?, json_data=? WHERE msg_id=?",
-                     (datetime.now().isoformat(), retry_num, json_data, message_id))
+        conn.execute("UPDATE retry_messages SET retry_time=?, retry_num=?, json_data=?, status=? WHERE msg_id=?",
+                     (datetime.now().isoformat(), retry_num, json_data, status, message_id))
         conn.commit()
         logger.info(f"重试已记录: {message_id} | {target_url} | 重试次数: {retry_num}")
     finally:
@@ -1151,7 +1152,7 @@ def get_retry_messages(max_retries=5, time_interval_minutes=60):
                     FROM retry_messages
                     WHERE datetime(retry_time) < datetime('now', ?)
                       AND retry_num < ?
-                      AND json_data <> 'clean_retry'
+                      AND status = '0'
                     ORDER BY retry_time ASC \
                     """
 
@@ -1325,7 +1326,10 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
                                msg['message_url'], msg['target_url'],'189转存123重试', msg['retry_num'] + 1)
             result_msg = f"[189转存123重试]\n✅天翼云盘转存123云盘成功\n消息内容: {msg['message_url']}\n链接: {msg['target_url']}"
             notifier.send_message(result_msg)
-            if not res is None:
+            if res is None:
+                # 保存结果到数据库
+                update_retry_message(msg['msg_id'], msg['target_url'], res, msg['retry_num'] + 1, '1')
+            else:
                 # 保存结果到数据库
                 update_retry_message(msg['msg_id'], msg['target_url'], res, msg['retry_num'] + 1)
     logger.info("[189转存123重试]处理天翼网盘监控转存123云盘重试结束")
@@ -1671,23 +1675,25 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                 notifier.send_message(batch_msg)
                 time.sleep(0.5)
 
-        # 进入重试队列
-        if len(error_files) > 0:
-            json_data['files'] = error_files
-            json_data['totalFilesCount'] = len(error_files)
-            json_data['totalSize'] = sum(f["size"] for f in error_files)
             return json.dumps(json_data)
 
+        # 进入重试队列
+        # if fail_count > 0:
+        #     json_data['files'] = error_files
+        #     json_data['totalFilesCount'] = len(error_files)
+        #     json_data['totalSize'] = sum(f["size"] for f in error_files)
+        #     return json.dumps(json_data)
+
         # 重试完成清除重新信息
-        if not len(error_files) > 0 and retry_num > 0:
-            return 'clean_retry'
+        # if not len(error_files) > 0 and retry_num > 0:
+        #     return 'clean_retry'
 
         return None
 
     except Exception as e:
         logger.error(f"{title}处理189文件失败: {str(e)}")
         notifier.send_message(f"{title}❌ 处理189文件失败:\n{str(e)}")
-        return None
+        return json.dumps(json_data)
 
 if __name__ == '__main__':
     
