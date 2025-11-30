@@ -29,6 +29,8 @@ from content_check import check_porn_content
 logging.getLogger("httpx").setLevel(logging.ERROR)
 logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 logging.getLogger("telebot").setLevel(logging.ERROR)
+
+
 class VersionReader:
     def __init__(self, file_path):
         self.file_path = Path(file_path)
@@ -40,26 +42,28 @@ class VersionReader:
         ]
 
     def read_version(self):
-        """读取版本信息"""
+        """从文件最后一行开始读取版本信息"""
         if not self.file_path.exists():
             raise FileNotFoundError(f"文件不存在: {self.file_path}")
 
-        content = self.file_path.read_text(encoding='utf-8')
+        # 读取文件所有行
+        with open(self.file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
 
-        for pattern, pattern_name in self.patterns:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                # return {
-                #     'version': match.group(1),
-                #     'pattern': pattern_name,
-                #     'file': str(self.file_path)
-                # }
-                return  match.group(1)
+        # 从最后一行开始向前搜索
+        for line in reversed(lines):
+            for pattern, pattern_name in self.patterns:
+                match = re.search(pattern, line, re.IGNORECASE)
+                if match:
+                    return match.group(1)
 
-        return "6.7.5"
+        return "6.7.5"  # 默认版本号
 
     def get_all_versions(self):
-        """获取文件中所有可能的版本号"""
+        """获取文件中所有可能的版本号（保持原有逻辑）"""
+        if not self.file_path.exists():
+            return []
+
         content = self.file_path.read_text(encoding='utf-8')
         versions = []
 

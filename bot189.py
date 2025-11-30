@@ -1150,15 +1150,16 @@ def get_retry_messages(max_retries=5, time_interval_minutes=60):
                            json_data, \
                            transfer_id
                     FROM retry_messages
-                    WHERE datetime(retry_time) < datetime('now', ?)
+                    WHERE datetime(retry_time) < datetime(?, ?)
                       AND retry_num < ?
                       AND status = '0'
                     ORDER BY retry_time ASC \
                     """
 
+            now_time = datetime.now().isoformat()
             time_modifier = f"-{time_interval_minutes} minutes"
 
-            rows = conn.execute(query, (time_modifier, max_retries)).fetchall()
+            rows = conn.execute(query, (now_time, time_modifier, max_retries)).fetchall()
 
             # 使用列表推导式简化代码
             retry_messages = [dict(row) for row in rows]

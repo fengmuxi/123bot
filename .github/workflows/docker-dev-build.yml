@@ -37,7 +37,7 @@ jobs:
       - name: Get version from code
         id: get_version
         run: |
-          VERSION=$(head -n 1 version.txt | grep -oP 'v\d+\.\d+\.\d+')
+          VERSION=$(grep -oP 'v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)?' version.txt | tail -n 1)
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
       
