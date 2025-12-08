@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 import os
 from p123client import P123Client, check_response
 from p189_export_share import create_189_rapid_transfer
+from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
@@ -1180,21 +1181,63 @@ def get_retry_messages(max_retries=5, time_interval_minutes=60):
 
 
 def extract_target_url(text):
-    import re
-    # 正则模式：同时匹配两种链接格式
-    # 1. /t/xxx 格式：https://cloud.189.cn/t/任意字母数字组合
-    # 2. /web/share?code=xxx 格式：https://cloud.189.cn/web/share?code=任意字母数字组合
-    pattern = r'(https?://cloud\.189\.cn/(t/\w+|web/share\?code=\w+))(?:\s*（访问码：\s*([0-9a-zA-Z]{4})）)?'
-    # 忽略大小写、支持多行文本匹配
-    matches = re.findall(pattern, text, re.IGNORECASE | re.DOTALL)
-    if matches:
-        # 去除重复链接并清理空格
-        unique_matches = list(set([match.strip() for match in matches]))
-        # 拼接完整链接（因为正则分组可能只匹配路径部分，需补全域名）
-        # 注：如果原始文本中的链接是完整的，这步可省略；若仅匹配到路径，需拼接
-        full_links = [f"https://cloud.189.cn/{link}" if not link.startswith("http") else link for link in unique_matches]
-        return full_links
-    return []
+    """
+        从文本中提取天翼云盘分享链接，支持多种格式
+
+        参数:
+            text: 包含可能的天翼云盘链接的文本
+
+        返回:
+            提取到的标准化URL列表，已去重
+        """
+    # 正则表达式模式，匹配以下格式：
+    # 1. https://cloud.189.cn/t/xxxxx
+    # 2. https://cloud.189.cn/web/share?code=xxxxx
+    # 3. 可能附带（访问码：xxxx）部分
+    pattern = r'''
+            (https?://cloud\.189\.cn/  # 协议和域名
+            (?:                         # 匹配两种路径格式
+                t/\w+|                  # /t/xxxx 格式
+                web/share\?code=\w+     # /web/share?code=xxxx 格式
+            ))
+            (?:\s*（访问码：\s*([0-9a-zA-Z]{4})）)?  # 可选的访问码部分
+        '''
+
+    # 查找所有匹配项（忽略大小写、支持多行）
+    matches = re.findall(pattern, text, re.IGNORECASE | re.VERBOSE | re.DOTALL)
+
+    # 处理匹配结果
+    urls = []
+    for match in matches:
+        url = match[0].strip()  # 获取URL部分
+
+        # 标准化URL（确保协议和域名一致）
+        parsed = urlparse(url)
+        if not parsed.scheme:  # 如果缺少协议，添加https
+            url = 'https://' + url
+            parsed = urlparse(url)
+
+        # 重建标准化URL（统一使用https和标准域名）
+        standardized = urlunparse((
+            'https',
+            'cloud.189.cn',
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            ''
+        ))
+
+        urls.append(standardized)
+
+    # 去重并保持原始顺序
+    seen = set()
+    unique_urls = []
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            unique_urls.append(url)
+
+    return unique_urls
 
 def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_md5):
     init_database()
