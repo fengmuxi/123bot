@@ -1184,7 +1184,7 @@ def extract_target_url(text):
     # 正则模式：同时匹配两种链接格式
     # 1. /t/xxx 格式：https://cloud.189.cn/t/任意字母数字组合
     # 2. /web/share?code=xxx 格式：https://cloud.189.cn/web/share?code=任意字母数字组合
-    pattern = r'https?:\/\/cloud\.189\.cn\/(t\/\w+|web\/share\?code=\w+)'
+    pattern = r'(https?://cloud\.189\.cn/(t/\w+|web/share\?code=\w+))(?:\s*（访问码：\s*([0-9a-zA-Z]{4})）)?'
     # 忽略大小写、支持多行文本匹配
     matches = re.findall(pattern, text, re.IGNORECASE | re.DOTALL)
     if matches:

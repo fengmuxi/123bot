@@ -351,7 +351,8 @@ if __name__ == "__main__":
         # 示例用法
         # share_url = "https://cloud.189.cn/t/eqEFJvRjuqee"
         # share_url = "https://cloud.189.cn/t/RFbYfm67ZzQf"
-        share_url = "https://cloud.189.cn/t/UzmqYvvANn6r（访问码：7wpc）"
+        share_url = "https://cloud.189.cn/t/QJZNBfJnYRBb（访问码：q9ug）"
+        # share_url = "https://cloud.189.cn/t/UzmqYvvANn6r（访问码：7wpc）"
         share_pwd = ""  # 如果有密码则填写
 
         result = create_189_rapid_transfer(share_url, share_pwd)
