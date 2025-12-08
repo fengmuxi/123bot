@@ -5,8 +5,7 @@ import hashlib
 import urllib.parse
 import urllib.request
 import json
-import xml.etree.ElementTree as ET
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 
 
 def create_189_rapid_transfer(share_url: str, share_pwd: str = "") -> dict[
@@ -28,10 +27,18 @@ def create_189_rapid_transfer(share_url: str, share_pwd: str = "") -> dict[
             match = re.search(r'[?&]code=([a-zA-Z0-9]+)', share_url)
         if not match:
             raise ValueError(
-                "无效的189网盘分享链接 (支持格式: https://cloud.189.cn/t/xxx 或 https://cloud.189.cn/web/share?code=xxx)")
+                "无效的189网盘分享链接 (支持格式: https://cloud.189.cn/t/xxx、https://cloud.189.cn/web/share?code=xxx 或 https://cloud.189.cn/t/xxx（访问码：xxxx）)")
 
         share_code = match.group(1)
         share_id = share_code  # 默认使用share_code
+
+        if not share_pwd:
+            # 提取访问码内容
+            code_pattern = r"（访问码：\s*([0-9a-zA-Z]{4})）"
+            code_match = re.search(code_pattern, share_url)
+            if code_match:
+                print("[189] 访问码:", code_match.group(1))  # 输出: 7wpc
+                share_pwd = code_match.group(1)
 
         # 如果有密码，需要先调用checkAccessCode获取真正的share_id
         if share_pwd:
@@ -343,7 +350,8 @@ if __name__ == "__main__":
     try:
         # 示例用法
         # share_url = "https://cloud.189.cn/t/eqEFJvRjuqee"
-        share_url = "https://cloud.189.cn/t/RFbYfm67ZzQf"
+        # share_url = "https://cloud.189.cn/t/RFbYfm67ZzQf"
+        share_url = "https://cloud.189.cn/t/UzmqYvvANn6r（访问码：7wpc）"
         share_pwd = ""  # 如果有密码则填写
 
         result = create_189_rapid_transfer(share_url, share_pwd)

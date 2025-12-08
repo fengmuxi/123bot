@@ -1329,7 +1329,7 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
             notifier.send_message(result_msg)
             if res is None:
                 # 保存结果到数据库
-                update_retry_message(msg['msg_id'], msg['target_url'], res, msg['retry_num'] + 1, '1')
+                update_retry_message(msg['msg_id'], msg['target_url'], msg['json_data'], msg['retry_num'] + 1, '1')
             else:
                 # 保存结果到数据库
                 update_retry_message(msg['msg_id'], msg['target_url'], res, msg['retry_num'] + 1)
