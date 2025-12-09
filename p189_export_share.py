@@ -8,7 +8,7 @@ import json
 from typing import Dict, List, Any
 
 
-def create_189_rapid_transfer(share_url: str, share_pwd: str = "") -> dict[
+def create_189_rapid_transfer(share_url: str, share_pwd: str = None) -> dict[
                                                                           str, str | list[dict[str, Any]] | int] | None:
     """
     创建189网盘秒传JSON
@@ -31,14 +31,6 @@ def create_189_rapid_transfer(share_url: str, share_pwd: str = "") -> dict[
 
         share_code = match.group(1)
         share_id = share_code  # 默认使用share_code
-
-        if not share_pwd:
-            # 提取访问码内容
-            code_pattern = r"（访问码：\s*([0-9a-zA-Z]{4})）"
-            code_match = re.search(code_pattern, share_url)
-            if code_match:
-                print("[189] 访问码:", code_match.group(1))  # 输出: 7wpc
-                share_pwd = code_match.group(1)
 
         # 如果有密码，需要先调用checkAccessCode获取真正的share_id
         if share_pwd:

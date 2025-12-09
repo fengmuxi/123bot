@@ -1182,43 +1182,41 @@ def get_retry_messages(max_retries=5, time_interval_minutes=60):
 
 def extract_target_url(text):
     """
-        从文本中提取天翼云盘分享链接，支持多种格式
+    从文本中精准提取天翼云盘链接，处理重复和访问码
 
-        参数:
-            text: 包含可能的天翼云盘链接的文本
+    参数:
+        text: 包含天翼云盘链接的文本
 
-        返回:
-            提取到的标准化URL列表，已去重
-        """
-    # 正则表达式模式，匹配以下格式：
-    # 1. https://cloud.189.cn/t/xxxxx
-    # 2. https://cloud.189.cn/web/share?code=xxxxx
-    # 3. 可能附带（访问码：xxxx）部分
+    返回:
+        list: 标准化后的链接列表，已去重并优先保留带访问码的版本
+    """
+    # 增强版正则表达式，匹配两种URL格式和访问码
     pattern = r'''
-            (https?://cloud\.189\.cn/  # 协议和域名
-            (?:                         # 匹配两种路径格式
-                t/\w+|                  # /t/xxxx 格式
-                web/share\?code=\w+     # /web/share?code=xxxx 格式
-            ))
-            (?:\s*（访问码：\s*([0-9a-zA-Z]{4})）)?  # 可选的访问码部分
-        '''
+        (https?://cloud\.189\.cn/  # 协议和域名
+        (?:                         # 路径格式
+            t/\w+|                  # /t/xxxx
+            web/share\?code=\w+     # /web/share?code=xxxx
+        ))
+        (?:\s*（访问码：\s*([0-9a-zA-Z]{4})）)?  # 访问码部分
+    '''
 
-    # 查找所有匹配项（忽略大小写、支持多行）
-    matches = re.findall(pattern, text, re.IGNORECASE | re.VERBOSE | re.DOTALL)
+    matches = re.findall(pattern, text, re.IGNORECASE | re.VERBOSE)
 
-    # 处理匹配结果
-    urls = []
+    # 存储结果：{标准化URL: (访问码, 原始URL)}
+    url_dict = defaultdict(list)
+
     for match in matches:
-        url = match[0].strip()  # 获取URL部分
+        raw_url = match[0].strip()
+        access_code = match[1] if len(match) > 1 and match[1] else None
 
-        # 标准化URL（确保协议和域名一致）
-        parsed = urlparse(url)
-        if not parsed.scheme:  # 如果缺少协议，添加https
-            url = 'https://' + url
-            parsed = urlparse(url)
+        # 标准化URL处理
+        parsed = urlparse(raw_url)
+        if not parsed.scheme:
+            raw_url = 'https://' + raw_url
+            parsed = urlparse(raw_url)
 
-        # 重建标准化URL（统一使用https和标准域名）
-        standardized = urlunparse((
+        # 重建标准化URL（统一协议和域名）
+        normalized_url = urlunparse((
             'https',
             'cloud.189.cn',
             parsed.path,
@@ -1227,17 +1225,34 @@ def extract_target_url(text):
             ''
         ))
 
-        urls.append(standardized)
+        # 存储到字典
+        url_dict[normalized_url].append((access_code, raw_url))
 
-    # 去重并保持原始顺序
-    seen = set()
-    unique_urls = []
-    for url in urls:
-        if url not in seen:
-            seen.add(url)
-            unique_urls.append(url)
+    # 处理每个URL，优先选择带访问码的版本
+    results = []
+    for url, versions in url_dict.items():
+        # 找出所有带访问码的版本
+        coded_versions = [v for v in versions if v[0]]
 
-    return unique_urls
+        if coded_versions:
+            # 优先选择带访问码的版本（取第一个）
+            selected = coded_versions[0]
+        else:
+            # 没有带访问码的版本，取第一个原始版本
+            selected = versions[0]
+
+        # 构建结果字符串
+        result = url
+        if selected[0]:
+            result += f"（访问码：{selected[0]}）"
+
+        results.append({
+            'url': url,
+            'access_code': selected[0] if selected[0] else None,
+            'full_url': result
+        })
+
+    return results
 
 def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_md5):
     init_database()

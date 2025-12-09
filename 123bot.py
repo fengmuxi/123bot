@@ -2680,18 +2680,18 @@ def handle_general_message(message):
             success_count = 0
             fail_count = 0
             link_save_method = get_int_env("ENV_189_LINK_UPLOAD_METHOD", 2)
-            for url in target_urls:
+            for item in target_urls:
                 try:
                     if link_save_method == 3 or link_save_method == 1:
-                        result = save_189_link(client189, url, os.getenv("ENV_189_LINK_UPLOAD_PID","-11"))
+                        result = save_189_link(client189, item['full_url'], os.getenv("ENV_189_LINK_UPLOAD_PID","-11"))
                         if result:
                             success_count += 1
-                            logger.info(f"转存成功: {url}")
+                            logger.info(f"转存成功: {item['full_url']}")
                         else:
                             fail_count += 1
-                            logger.error(f"转存失败: {url}")
+                            logger.error(f"转存失败: {item['full_url']}")
                     if link_save_method == 2 or link_save_method == 1:
-                        json_data = create_189_rapid_transfer(url, "")
+                        json_data = create_189_rapid_transfer(item['url'], item['access_code'])
                         if json_data:
                             save_json_file_189(message, json_data)
                         else:
@@ -2699,7 +2699,7 @@ def handle_general_message(message):
                             reply_thread_pool.submit(send_reply, message, f"189分享转存123出错")
                 except Exception as e:
                     fail_count += 1
-                    logger.error(f"转存异常: {url}, 错误: {str(e)}")
+                    logger.error(f"转存异常: {item['full_url']}, 错误: {str(e)}")
             #time.sleep(3)
             # reply_thread_pool.submit(send_reply, message, f"转存完成：成功{success_count}个，失败{fail_count}个")
             user_state_manager.clear_state(user_id)
