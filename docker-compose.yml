@@ -11,37 +11,20 @@ services:
       - ./upload:/app/upload
       - ./transfer:/app/transfer
     environment:
-      # 时区设置
+      # 必填：代理配置（v2填20172带分流规则的端口，clash填7890端口）
+      - HTTP_PROXY=http://192.168.31.63:7890
+      # 必填：代理配置（v2填20172带分流规则的端口，clash填7890端口）
+      - HTTPS_PROXY=http://192.168.31.63:7890
+      # 必填：时区配置
       - TZ=Asia/Shanghai
-      
-      # Web管理界面登录配置（必填）
+      # 必填：TG机器人Token（从@BotFather获取）
+      - ENV_TG_BOT_TOKEN=7773483990:AAE4dDZdml7IPmAmIw17OBkSWiu723YwnX0
+      # 必填：TG管理员用户ID（从@userinfobot获取）
+      - ENV_TG_ADMIN_USER_ID=7955100603
+      # 必填：WEB配置页面的登录账号
       - ENV_WEB_PASSPORT=admin
-      - ENV_WEB_PASSWORD=123456
-      
-      # 123云盘配置（必填）- 从db/user.env文件读取，或在这里直接配置
-      - ENV_123_CLIENT_ID=${ENV_123_CLIENT_ID:-}
-      - ENV_123_CLIENT_SECRET=${ENV_123_CLIENT_SECRET:-}
-      
-      # Telegram Bot配置（必填）
-      - ENV_TG_BOT_TOKEN=${ENV_TG_BOT_TOKEN:-}
-      - ENV_TG_ADMIN_USER_ID=${ENV_TG_ADMIN_USER_ID:-}
-      
-      # 123云盘功能配置
-      - ENV_123_LINK_UPLOAD_PID=${ENV_123_LINK_UPLOAD_PID:-0}
-      - ENV_123_MAGNET_UPLOAD_PID=${ENV_123_MAGNET_UPLOAD_PID:-0}
-      - ENV_123_JSON_UPLOAD_PID=${ENV_123_JSON_UPLOAD_PID:-0}
-      - ENV_123_UPLOAD_PID=${ENV_123_UPLOAD_PID:-0}
-      
-      # 监控功能配置
-      - ENV_AUTHORIZATION=${ENV_AUTHORIZATION:-0}
-      - ENV_TG_CHANNEL=${ENV_TG_CHANNEL:-}
-      - ENV_FILTER=${ENV_FILTER:-}
-      - ENV_EXCLUDE_FILTER=${ENV_EXCLUDE_FILTER:-}
-      - ENV_CHECK_INTERVAL=${ENV_CHECK_INTERVAL:-5}
-      
-      # 其他配置
-      - ENV_AUTO_MAKE_JSON=${ENV_AUTO_MAKE_JSON:-1}
-      - ENV_MAKE_NEW_LINK=${ENV_MAKE_NEW_LINK:-1}
-      - ENV_FILE_PER_SECOND=${ENV_FILE_PER_SECOND:-5}
-      - MAX_CACHE_302LINK=${MAX_CACHE_302LINK:-100}
+      # 必填：WEB配置页面的登录密码
+      - ENV_WEB_PASSWORD=dxw13145920
+      # 代理配置，以下地址不走代理
+      - NO_PROXY=localhost,127.0.0.1,192.168.0.0/16,10.0.0.0/8,*.123pan.com,*.115.com,*.189.cn,*.*.189.cn,*.quark.cn
 
