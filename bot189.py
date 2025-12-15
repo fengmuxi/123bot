@@ -1270,19 +1270,27 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
                 message_id, date_str, message_url, target_url, message_text = msg
                 logger.info(f"[天翼网盘转存]处理新消息: {message_id} | {target_url}")
 
+                # 检查target_url是否为字典，如果是则提取full_url或url字段，否则直接使用target_url作为full_url
+                if isinstance(target_url, dict):
+                    full_url = target_url.get('full_url', '')
+                    if not full_url:
+                        full_url = target_url.get('url', '')
+                else:
+                    full_url = target_url
+
                 # 转存到189
-                result = save_189_link(client189, target_url, ENV_189_UPLOAD_PID)
+                result = save_189_link(client189, full_url, ENV_189_UPLOAD_PID)
                 if result:
                     status = "转存成功"
-                    result_msg = f"[天翼网盘转存]\n✅天翼云盘转存成功\n消息内容: {message_url}\n链接: {target_url}"
+                    result_msg = f"[天翼网盘转存]\n✅天翼云盘转存成功\n消息内容: {message_url}\n链接: {full_url}"
                 else:
                     status = "转存失败"
-                    result_msg = f"[天翼网盘转存]\n❌天翼云盘转存失败\n消息内容: {message_url}\n链接: {target_url}"
+                    result_msg = f"[天翼网盘转存]\n❌天翼云盘转存失败\n消息内容: {message_url}\n链接: {full_url}"
 
                 notifier.send_message(result_msg)
 
                 # 保存结果到数据库
-                save_message(message_id, date_str, message_url, target_url, status, result_msg)
+                save_message(message_id, date_str, message_url, full_url, status, result_msg)
         else:
             logger.info("[天翼网盘转存]未发现新的天翼网盘分享链接")
 
@@ -1295,6 +1303,16 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
                 message_id, date_str, message_url, target_url, message_text = msg
                 logger.info(f"[天翼网盘转存123云盘]处理新消息: {message_id} | {target_url}")
 
+                # 检查target_url是否为字典，如果是则提取full_url或url字段，否则直接使用target_url作为full_url
+                if isinstance(target_url, dict):
+                    url = target_url.get('url', '')
+                    full_url = target_url.get('full_url', '')
+                    access_code = target_url.get('access_code', '')
+                    if not full_url:
+                        full_url = target_url.get('url', '')
+                else:
+                    full_url = target_url
+
                 # 获取排除关键词环境变量（多个关键词用|分隔）
                 # 当排除关键词为空时，全都不排除
                 exclude_filter = os.environ.get('ENV_189_TO_123_EXCLUDE_FILTER', '')
@@ -1304,9 +1322,9 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
                 filter_pattern = re.compile(FILTER, re.IGNORECASE)
 
                 # 检查是否匹配过滤条件且不包含排除关键词
-                is_match = filter_pattern.search(target_url) or filter_pattern.search(message_text)
+                is_match = filter_pattern.search(full_url) or filter_pattern.search(message_text)
                 is_excluded = exclude_pattern and (
-                            exclude_pattern.search(target_url) or exclude_pattern.search(message_text))
+                            exclude_pattern.search(full_url) or exclude_pattern.search(message_text))
 
                 if not is_match:
                     status = "未转存"
@@ -1344,7 +1362,7 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
                                     # 注意：关键词内部的空格（如"DOLBY VISION"中的空格）不会被去除，会作为关键词的一部分进行匹配
                                     if (keyword.strip() and
                                             (keyword in message_text or
-                                             (target_url and keyword in target_url))):
+                                             (full_url and keyword in full_url))):
                                         transfer_id = int(folder_id.strip())
                                         logger.info(f"[天翼网盘转存123云盘]\n消息匹配二次过滤关键词 '{keyword}'，将转存到文件夹ID: {folder_id}")
                                         notifier.send_message(f"[天翼网盘转存123云盘]\n消息匹配二次过滤关键词 '{keyword}'，将转存到文件夹ID: {folder_id}")
@@ -1353,22 +1371,22 @@ def tg_189monitor(client189, client123, optimized_etag_to_hex, robust_normalize_
                             logger.error(f"[天翼网盘转存123云盘]解析二次过滤规则失败: {e}")
                             notifier.send_message(f"[天翼网盘转存123云盘]解析二次过滤规则失败: {e}")
 
-                    json_data = create_189_rapid_transfer(target_url, "")
+                    json_data = create_189_rapid_transfer(url, access_code)
                     if json_data:
-                        res = save_json_file_189(notifier, json_data, client123, optimized_etag_to_hex, robust_normalize_md5, transfer_id, message_url, target_url)
+                        res = save_json_file_189(notifier, json_data, client123, optimized_etag_to_hex, robust_normalize_md5, transfer_id, message_url, full_url)
                         status = "转存成功"
-                        result_msg = f"[天翼网盘转存123云盘]\n✅天翼云盘转存123云盘成功\n消息内容: {message_url}\n链接: {target_url}"
+                        result_msg = f"[天翼网盘转存123云盘]\n✅天翼云盘转存123云盘成功\n消息内容: {message_url}\n链接: {full_url}"
                         if not res is None:
                             # 保存结果到数据库
-                            save_retry_message(message_id, date_str, message_url, target_url, result_msg, None, res, transfer_id)
+                            save_retry_message(message_id, date_str, message_url, full_url, result_msg, None, res, transfer_id)
                     else:
                         status = "转存失败"
-                        result_msg = f"[天翼网盘转存123云盘]\n❌天翼云盘转存123云盘失败\n消息内容: {message_url}\n链接: {target_url}"
+                        result_msg = f"[天翼网盘转存123云盘]\n❌天翼云盘转存123云盘失败\n消息内容: {message_url}\n链接: {full_url}"
 
                 notifier.send_message(result_msg)
 
                 # 保存结果到数据库
-                save_message(message_id, date_str, message_url, target_url, status, result_msg, None, "2")
+                save_message(message_id, date_str, message_url, full_url, status, result_msg, None, "2")
             else:
                 logger.info("[天翼网盘转存123云盘]未发现新的天翼网盘分享链接")
 
