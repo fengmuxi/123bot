@@ -349,7 +349,7 @@ if __name__ == "__main__":
 
         result = create_189_rapid_transfer(share_url, share_pwd)
         print("秒传信息获取成功:")
-        print(f"json信息:{result}")
+        print(f"json信息:{json.dumps(result, ensure_ascii=False)}")
         print(f"文件数量: {result['totalFilesCount']}")
         print(f"总大小: {result['totalSize']} bytes")
         print("文件列表:")

@@ -1752,14 +1752,14 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                 notifier.send_message(batch_msg)
                 time.sleep(0.5)
 
-            return json.dumps(json_data)
+            return json.dumps(json_data, ensure_ascii=False)
 
         # 进入重试队列
         # if fail_count > 0:
         #     json_data['files'] = error_files
         #     json_data['totalFilesCount'] = len(error_files)
         #     json_data['totalSize'] = sum(f["size"] for f in error_files)
-        #     return json.dumps(json_data)
+        #     return json.dumps(json_data, ensure_ascii=False)
 
         # 重试完成清除重新信息
         # if not len(error_files) > 0 and retry_num > 0:
@@ -1770,7 +1770,7 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
     except Exception as e:
         logger.error(f"{title}处理189文件失败: {str(e)}")
         notifier.send_message(f"{title}❌ 处理189文件失败:\n{str(e)}")
-        return json.dumps(json_data)
+        return json.dumps(json_data, ensure_ascii=False)
 
 if __name__ == '__main__':
     
