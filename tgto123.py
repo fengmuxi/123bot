@@ -4047,11 +4047,18 @@ def main():
     except Exception as e:
         logger.error(f"程序异常终止: {str(e)}")
         #notifier.send_message(f"tgto123：程序异常终止: {str(e)}")
-from ptto115 import ptto123process
+# 仅在需要时导入ptto115模块，避免依赖问题
+
 def ptto123():
     while get_int_env("ENV_PTTO123_SWITCH", 0) or get_int_env("ENV_PTTO115_SWITCH", 0):
         try:
+            from ptto115 import ptto123process
             ptto123process()
+        except ImportError as e:
+            logger.error(f"ptto123模块导入失败: {str(e)}")
+            bot.send_message(TG_ADMIN_USER_ID, f"ptto123模块导入失败: {str(e)}")
+            # 导入失败后，等待更长时间再重试，或者直接退出
+            time.sleep(3600)  # 1小时后重试
         except Exception as e:
             logger.error(f"ptto123线程异常终止: {str(e)}")
             bot.send_message(TG_ADMIN_USER_ID, f"ptto123线程异常终止: {str(e)}")

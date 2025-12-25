@@ -2269,9 +2269,13 @@ def parse_share_link(message, share_link, up_load_pid=UPLOAD_JSON_TARGET_PID, se
                     if not folder:
                         logger.warning(f"创建文件夹失败: {part}，将使用当前目录")
                     else:
-                        folder_id = folder["data"]["Info"]["FileId"]
-                        folder_cache[cache_key] = folder_id
-                        parent_id = folder_id
+                        try:
+                            folder_id = folder["data"]["Info"]["FileId"]
+                            folder_cache[cache_key] = folder_id
+                            parent_id = folder_id
+                        except (TypeError, KeyError) as e:
+                            logger.error(f"解析文件夹响应失败: {str(e)}, 响应内容: {folder}")
+                            logger.warning(f"创建文件夹失败: {part}，将使用当前目录")
                 
                 # 处理ETag
                 if is_v2_etag:
@@ -2704,30 +2708,33 @@ def handle_general_message(message):
             # reply_thread_pool.submit(send_reply, message, f"转存完成：成功{success_count}个，失败{fail_count}个")
             user_state_manager.clear_state(user_id)
             return
-        from bot115 import extract_target_url as  extract_target_url_115
-        from bot115 import transfer_shared_link as  transfer_shared_link_115
-        from bot115 import init_115_client
-        target_urls = extract_target_url_115(text)
-        if target_urls:
-            reply_thread_pool.submit(send_reply_delete, message, f"发现{len(target_urls)}个115分享链接，开始转存...")
-            client = init_115_client()
-            success_count = 0
-            fail_count = 0
-            for url in target_urls:
-                try:
-                    result = transfer_shared_link_115(client, url, os.getenv("ENV_115_LINK_UPLOAD_PID","0"))
-                    if result:
-                        success_count += 1
-                        logger.info(f"转存成功: {url}")
-                    else:
+        try:
+            from bot115 import extract_target_url as  extract_target_url_115
+            from bot115 import transfer_shared_link as  transfer_shared_link_115
+            from bot115 import init_115_client
+            target_urls = extract_target_url_115(text)
+            if target_urls:
+                reply_thread_pool.submit(send_reply_delete, message, f"发现{len(target_urls)}个115分享链接，开始转存...")
+                client = init_115_client()
+                success_count = 0
+                fail_count = 0
+                for url in target_urls:
+                    try:
+                        result = transfer_shared_link_115(client, url, os.getenv("ENV_115_LINK_UPLOAD_PID","0"))
+                        if result:
+                            success_count += 1
+                            logger.info(f"转存成功: {url}")
+                        else:
+                            fail_count += 1
+                            logger.error(f"转存失败: {url}")
+                    except Exception as e:
                         fail_count += 1
-                        logger.error(f"转存失败: {url}")
-                except Exception as e:
-                    fail_count += 1
-                    logger.error(f"转存异常: {url}, 错误: {str(e)}")
-            reply_thread_pool.submit(send_reply, message, f"转存完成：成功{success_count}个，失败{fail_count}个")
-            user_state_manager.clear_state(user_id)
-            return
+                        logger.error(f"转存异常: {url}, 错误: {str(e)}")
+                reply_thread_pool.submit(send_reply, message, f"转存完成：成功{success_count}个，失败{fail_count}个")
+                user_state_manager.clear_state(user_id)
+                return
+        except ImportError as e:
+            logger.error(f"115分享链接处理模块导入失败: {str(e)}")
         if message.content_type == 'photo':
             user_state_manager.clear_state(user_id)
             reply_thread_pool.submit(send_reply, message, f"该条消息未找到分享链接、秒传链接、秒传JSON、磁力链等有效内容")
@@ -3948,14 +3955,17 @@ def save_json_file_189(message, json_data):
                     except Exception as e:
                         retry_count -= 1
                         logger.warning(f"转存文件 {file_name} 失败 (剩余重试: {retry_count}): {str(e)}")
-                        if rapid_resp and ("同名文件" in rapid_resp.get("message", {})):
-                            reply_thread_pool.submit(send_reply, message, rapid_resp.get("message", {}))
-                        if rapid_resp and ("Etag" in rapid_resp.get("message", {})):
-                            break
-                        if rapid_resp and ("文件信息" in rapid_resp.get("message", {})):
-                            reply_thread_pool.submit(send_reply, message,
-                                                     "请检查189的Cookie是否过期，或是否添加- NO_PROXY=*.189.cn")
-                            break
+                        # 确保rapid_resp不是None，并且message存在且是字符串
+                        message_content = rapid_resp.get("message", "") if rapid_resp else ""
+                        if isinstance(message_content, str):
+                            if "同名文件" in message_content:
+                                reply_thread_pool.submit(send_reply, message, message_content)
+                            if "Etag" in message_content:
+                                break
+                            if "文件信息" in message_content:
+                                reply_thread_pool.submit(send_reply, message,
+                                                         "请检查189的Cookie是否过期，或是否添加- NO_PROXY=*.189.cn")
+                                break
                         time.sleep(31)
 
                 if rapid_resp is None:
@@ -4226,11 +4236,11 @@ def check_task():
         bot_thread.start()
 
 if __name__ == "__mp_main__":
-    from bot115 import tg_115monitor
-    from bot189 import tg_189monitor,Cloud189
+    # 延迟导入bot189模块，避免p115client依赖问题
+    from bot189 import Cloud189
     client189 = Cloud189()
-    ENV_189_CLIENT_ID = os.getenv("ENV_189_CLIENT_ID","")
-    ENV_189_CLIENT_SECRET = os.getenv("ENV_189_CLIENT_SECRET","")
+    ENV_189_CLIENT_ID = os.getenv("ENV_189_CLIENT_ID"," ")
+    ENV_189_CLIENT_SECRET = os.getenv("ENV_189_CLIENT_SECRET"," ")
 
     if (ENV_189_CLIENT_ID and ENV_189_CLIENT_SECRET):
         logger.info("天翼云盘正在尝试登录 ...")
@@ -4402,9 +4412,17 @@ def main():
                 else:
                     logger.info("未发现新的123分享链接")
             if get_int_env("ENV_115_TGMONITOR_SWITCH", 0):
-                tg_115monitor()
+                try:
+                    from bot115 import tg_115monitor
+                    tg_115monitor()
+                except ImportError as e:
+                    logger.error(f"115监控模块导入失败: {str(e)}")
             if get_int_env("ENV_189_TGMONITOR_SWITCH", 0):
-                tg_189monitor(client189,client, optimized_etag_to_hex, robust_normalize_md5)
+                try:
+                    from bot189 import tg_189monitor
+                    tg_189monitor(client189,client, optimized_etag_to_hex, robust_normalize_md5)
+                except ImportError as e:
+                    logger.error(f"189监控模块导入失败: {str(e)}")
             logger.info(f"休息{CHECK_INTERVAL}分钟，当前版本 {version}...")
             total_wait_seconds = CHECK_INTERVAL * 60
             elapsed_seconds = 0
@@ -4444,11 +4462,17 @@ def main():
     except Exception as e:
         logger.error(f"程序异常终止: {str(e)}")
         #notifier.send_message(f"tgto123：程序异常终止: {str(e)}")
-from ptto115 import ptto123process
+# 仅在需要时导入ptto115模块，避免依赖问题
 def ptto123():
     while get_int_env("ENV_PTTO123_SWITCH", 0) or get_int_env("ENV_PTTO115_SWITCH", 0):
         try:
+            from ptto115 import ptto123process
             ptto123process()
+        except ImportError as e:
+            logger.error(f"ptto123模块导入失败: {str(e)}")
+            bot.send_message(TG_ADMIN_USER_ID, f"ptto123模块导入失败: {str(e)}")
+            # 导入失败后，等待更长时间再重试，或者直接退出
+            time.sleep(3600)  # 1小时后重试
         except Exception as e:
             logger.error(f"ptto123线程异常终止: {str(e)}")
             bot.send_message(TG_ADMIN_USER_ID, f"ptto123线程异常终止: {str(e)}")

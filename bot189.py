@@ -1513,9 +1513,13 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                     if not folder:
                         logger.warning(f"{title}创建文件夹失败: {part}，将使用当前目录")
                     else:
-                        folder_id = folder["data"]["Info"]["FileId"]
-                        folder_cache[cache_key] = folder_id
-                        parent_id = folder_id
+                        try:
+                            folder_id = folder["data"]["Info"]["FileId"]
+                            folder_cache[cache_key] = folder_id
+                            parent_id = folder_id
+                        except (TypeError, KeyError) as e:
+                            logger.error(f"{title}解析文件夹响应失败: {str(e)}, 响应内容: {folder}")
+                            logger.warning(f"{title}创建文件夹失败: {part}，将使用当前目录")
                     # time.sleep(1/get_int_env("ENV_FILE_PER_SECOND", 5))  # 避免限流
 
                 # 处理ETag
@@ -1547,13 +1551,16 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                     except Exception as e:
                         retry_count -= 1
                         logger.warning(f"{title}转存文件 {file_name} 失败 (剩余重试: {retry_count}): {str(e)}")
-                        if rapid_resp and ("同名文件" in rapid_resp.get("message", {})):
-                            notifier.send_message(f"{title}" + rapid_resp.get("message", {}))
-                        if rapid_resp and ("Etag" in rapid_resp.get("message", {})):
-                            break
-                        if rapid_resp and ("文件信息" in rapid_resp.get("message", {})):
-                            notifier.send_message(f"{title}请检查189的Cookie是否过期，或是否添加- NO_PROXY=*.189.cn")
-                            break
+                        # 确保rapid_resp不是None，并且message存在且是字符串
+                        message_content = rapid_resp.get("message", "") if rapid_resp else ""
+                        if isinstance(message_content, str):
+                            if "同名文件" in message_content:
+                                notifier.send_message(f"{title}" + message_content)
+                            if "Etag" in message_content:
+                                break
+                            if "文件信息" in message_content:
+                                notifier.send_message(f"{title}请检查189的Cookie是否过期，或是否添加- NO_PROXY=*.189.cn")
+                                break
                         time.sleep(31)
 
                 if rapid_resp is None:

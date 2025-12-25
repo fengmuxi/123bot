@@ -148,7 +148,7 @@ def create_189_rapid_transfer(share_url: str, share_pwd: str = None) -> dict[
         files = get_189_share_files(share_id, file_id, file_id, "", share_mode, share_pwd, share_code, is_folder)
 
         return {
-            "commonPath": file_name,
+            "commonPath": file_name.replace(" ","") if file_name else '',
             "files": files,
             "totalFilesCount": len(files),
             "totalSize": sum(f["size"] for f in files),
@@ -244,7 +244,7 @@ def get_189_share_files(share_id: str, share_dir_file_id: str, file_id: str, pat
         for file in file_list:
             file_path = f"{path}/{file['name']}" if path else file['name']
             files.append({
-                "path": file_path,
+                "path": file_path.replace(" ", ""),
                 "etag": (file.get('md5', '')).lower(),  # MD5转小写
                 "size": file.get('size', 0)
             })
@@ -343,7 +343,7 @@ if __name__ == "__main__":
         # 示例用法
         # share_url = "https://cloud.189.cn/t/eqEFJvRjuqee"
         # share_url = "https://cloud.189.cn/t/RFbYfm67ZzQf"
-        share_url = "https://cloud.189.cn/t/QJZNBfJnYRBb（访问码：q9ug）"
+        share_url = "https://cloud.189.cn/web/share?code=MzIbie2qqEbe"
         # share_url = "https://cloud.189.cn/t/UzmqYvvANn6r（访问码：7wpc）"
         share_pwd = ""  # 如果有密码则填写
 
