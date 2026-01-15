@@ -1,6 +1,8 @@
 import base64
 import binascii
 import json
+import random
+import string
 import time
 
 import requests
@@ -1508,7 +1510,11 @@ def save_json_file_189(notifier,json_data, client123, optimized_etag_to_hex, rob
                         except Exception as e:
                             retry_count -= 1
                             logger.warning(f"{title}创建文件夹 {part} 失败 (剩余重试: {retry_count}): {str(e)}")
-                            time.sleep(31)
+                            if len(path_parts) == 2 and path_parts[0] == part:
+                                characters = string.ascii_letters + string.digits  # 字母+数字
+                                suffix = ''.join(random.choice(characters) for _ in range(4))
+                                part = part + ' - ' + suffix
+                            time.sleep(30)
 
                     if not folder:
                         logger.warning(f"{title}创建文件夹失败: {part}，将使用当前目录")
